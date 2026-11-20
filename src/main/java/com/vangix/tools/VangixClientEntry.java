@@ -608,5 +608,77 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
         return mapping;
+package com.vangixtools;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.StringJoiner;
+import net.fabricmc.api.ClientModInitializer;
+
+public class VangixClientEntry implements ClientModInitializer {
+    private static boolean dumpedGizmos = false;
+
+    @Override
+    public void onInitializeClient() {
+        // Регистрация кейбиндов, событий и инициализация клиента
     }
+
+    public static void onWorldOverlayRender() {
+        if (!dumpedGizmos) {
+            dumpedGizmos = true;
+            dumpGizmoPackageClasses();
+        }
+    }
+
+    private static void dumpGizmoPackageClasses() {
+        String[] candidates = {
+                "net.minecraft.gizmos.Gizmos",
+                "net.minecraft.gizmos.Gizmo",
+                "net.minecraft.gizmos.GizmoProperties",
+                "net.minecraft.gizmos.SimpleGizmoCollector",
+                "net.minecraft.gizmos.LineGizmo",
+                "net.minecraft.gizmos.BoxGizmo",
+                "net.minecraft.gizmos.CubeGizmo",
+                "net.minecraft.gizmos.CuboidGizmo",
+                "net.minecraft.gizmos.QuadGizmo",
+                "net.minecraft.gizmos.PolygonGizmo",
+                "net.minecraft.gizmos.PointGizmo",
+                "net.minecraft.gizmos.TextGizmo"
+        };
+
+        for (String className : candidates) {
+            try {
+                Class<?> clazz = Class.forName(className);
+                StringJoiner entries = new StringJoiner(", ");
+
+                for (Constructor<?> ctor : clazz.getConstructors()) {
+                    entries.add("new " + clazz.getSimpleName() + formatParams(ctor.getParameterTypes()));
+                }
+
+                for (Method method : clazz.getMethods()) {
+                    if (method.getDeclaringClass() != Object.class) {
+                        entries.add(
+                                method.getReturnType().getSimpleName()
+                                        + " "
+                                        + method.getName()
+                                        + formatParams(method.getParameterTypes())
+                        );
+                    }
+                }
+
+                System.out.println("[VangixTools][GizmoDump] " + className + " -> " + entries);
+            } catch (Throwable ignored) {
+                // Класс с таким именем отсутствует в этой версии сборки
+            }
+        }
+    }
+
+    private static String formatParams(Class<?>[] params) {
+        StringJoiner joiner = new StringJoiner(", ", "(", ")");
+        for (Class<?> param : params) {
+            joiner.add(param.getSimpleName());
+        }
+        return joiner.toString();
+    }
+}    }
 }
