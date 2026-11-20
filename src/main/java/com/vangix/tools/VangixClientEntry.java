@@ -12,19 +12,19 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
-import java.util.Map;
 
 public class VangixClientEntry implements ClientModInitializer {
 
     public static final String MOD_ID = "vangixtools";
     public static KeyMapping OPEN_MENU_KEY;
+
+    private static long lastOverlayFrameId = -1L;
+    private static boolean loggedRenderDebug = false;
 
     @Override
     public void onInitializeClient() {
@@ -47,8 +47,6 @@ public class VangixClientEntry implements ClientModInitializer {
             WorldOverlayRenderer.collectTargets(client);
         });
 
-        registerWorldRenderSafe();
-
         HudElementRegistry.attachElementBefore(
                 VanillaHudElements.CHAT,
                 Identifier.fromNamespaceAndPath(MOD_ID, "status_hud"),
@@ -59,86 +57,57 @@ public class VangixClientEntry implements ClientModInitializer {
         );
     }
 
-    private static void registerWorldRenderSafe() {
-        String[][] candidates = {
-                {"net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents", "LAST"},
-                {"net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents", "END"},
-                {"net.fabricmc.fabric.api.client.rendering.v1.LevelRenderEvents", "LAST"},
-                {"net.fabricmc.fabric.api.client.rendering.v1.LevelRenderEvents", "END"}
-        };
-
-        for (String[] pair : candidates) {
-            try {
-                Class<?> eventClass = Class.forName(pair[0]);
-                Field eventField = eventClass.getField(pair[1]);
-                Object eventInstance = eventField.get(null);
-                if (eventInstance == null) continue;
-
-                Method registerMethod = findRegisterMethod(eventInstance.getClass());
-                if (registerMethod == null) continue;
-
-                Class<?> listenerInterface = registerMethod.getParameterTypes()[0];
-                Object proxyListener = Proxy.newProxyInstance(
-                        listenerInterface.getClassLoader(),
-                        new Class<?>[]{listenerInterface},
-                        (proxy, method, args) -> {
-                            renderWorldOverlays(args);
-                            return null;
-                        }
-                );
-                registerMethod.invoke(eventInstance, proxyListener);
-                return;
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    private static Method findRegisterMethod(Class<?> eventObjClass) {
-        for (Method m : eventObjClass.getMethods()) {
-            if (m.getName().equals("register") && m.getParameterCount() == 1) {
-                return m;
-            }
-        }
-        return null;
-    }
-
-    private static void renderWorldOverlays(Object[] args) {
+    public static void renderWorldOverlaysFromLevelRenderer(Object levelRenderer) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
 
-        PoseStack poseStack = extractPoseStack(args);
-        if (poseStack == null) return;
+        // Гарантируем отрисовку не чаще 1 раза за игровой тик/кадр
+        long frameToken = mc.level.getGameTime() * 1_000_000L + System.nanoTime() / 4_000_000L;
+        if (frameToken == lastOverlayFrameId) return;
+        lastOverlayFrameId = frameToken;
 
-        Vec3 camPos = extractCameraPos(mc, args);
-        Object bufferSource = extractBufferSource(mc, args);
-        if (bufferSource == null) return;
-
+        Vec3 camPos = extractCameraPos(mc, null);
+        Object bufferSource = extractBufferSource(mc, null);
         Object quadLayer = resolveRenderLayer("debugQuads", "DEBUG_QUADS", "lines", "LINES");
         Object lineLayer = resolveRenderLayer("lines", "LINES", "debugLineStrip", "DEBUG_LINE_STRIP");
 
+        if (!loggedRenderDebug) {
+            loggedRenderDebug = true;
+            System.out.println("[VangixTools] Overlay debug -> camPos=" + camPos
+                    + ", bufferSource=" + (bufferSource != null ? bufferSource.getClass().getName() : "null")
+                    + ", quadLayer=" + (quadLayer != null ? quadLayer : "null")
+                    + ", lineLayer=" + (lineLayer != null ? lineLayer : "null")
+                    + ", blocks=" + WorldOverlayRenderer.getBlockTargets().size()
+                    + ", chunks=" + WorldOverlayRenderer.getChunkTargets().size()
+                    + ", players=" + WorldOverlayRenderer.getPlayerTargets().size());
+        }
+
+        if (bufferSource == null || (quadLayer == null && lineLayer == null)) {
+            return;
+        }
+
+        PoseStack poseStack = new PoseStack();
         poseStack.pushPose();
         poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
 
-        // 1) Chunk Finder — подсветка площади подозрительных чанков (плоскость + контур, без чата)
-        if (FeatureState.areaScanner && quadLayer != null && lineLayer != null) {
-            for (Map.Entry<Long, AreaScanCache.ScanResult> entry : AreaScanCache.getFlaggedChunks().entrySet()) {
-                long key = entry.getKey();
-                AreaScanCache.ScanResult res = entry.getValue();
-                int cx = ChunkPos.getX(key);
-                int cz = ChunkPos.getZ(key);
-                double x1 = cx * 16.0;
-                double z1 = cz * 16.0;
-                double x2 = x1 + 16.0;
-                double z2 = z1 + 16.0;
-                double y = res.avgY + 0.05;
-
-                drawHorizontalPlane(poseStack, bufferSource, quadLayer, x1, y, z1, x2, z2, 0.15f, 0.90f, 0.25f, 0.35f);
-                drawHorizontalOutline(poseStack, bufferSource, lineLayer, x1, y + 0.01, z1, x2, z2, 0.15f, 0.95f, 0.25f, 0.95f);
+        // 1) Chunk Finder
+        if (FeatureState.areaScanner) {
+            for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
+                if (quadLayer != null) {
+                    drawHorizontalPlane(poseStack, bufferSource, quadLayer,
+                            ct.minX(), ct.y(), ct.minZ(), ct.maxX(), ct.maxZ(),
+                            ct.r(), ct.g(), ct.b(), ct.fillAlpha());
+                }
+                if (lineLayer != null) {
+                    drawHorizontalOutline(poseStack, bufferSource, lineLayer,
+                            ct.minX(), ct.y() + 0.01, ct.minZ(), ct.maxX(), ct.maxZ(),
+                            ct.r(), ct.g(), ct.b(), ct.lineAlpha());
+                }
             }
         }
 
-        // 2) Block ESP — подсветка площади/объёма блоков разными цветами
-        if (FeatureState.containerSight && quadLayer != null && lineLayer != null) {
+        // 2) Block ESP
+        if (FeatureState.containerSight) {
             for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
                 BlockPos p = box.pos();
                 double x1 = p.getX();
@@ -148,12 +117,18 @@ public class VangixClientEntry implements ClientModInitializer {
                 double y2 = y1 + 1.0;
                 double z2 = z1 + 1.0;
 
-                drawBoxFill(poseStack, bufferSource, quadLayer, x1, y1, z1, x2, y2, z2, box.r(), box.g(), box.b(), box.fillAlpha());
-                drawBoxOutline(poseStack, bufferSource, lineLayer, x1, y1, z1, x2, y2, z2, box.r(), box.g(), box.b(), box.lineAlpha());
+                if (quadLayer != null) {
+                    drawBoxFill(poseStack, bufferSource, quadLayer, x1, y1, z1, x2, y2, z2,
+                            box.r(), box.g(), box.b(), box.fillAlpha());
+                }
+                if (lineLayer != null) {
+                    drawBoxOutline(poseStack, bufferSource, lineLayer, x1, y1, z1, x2, y2, z2,
+                            box.r(), box.g(), box.b(), box.lineAlpha());
+                }
             }
         }
 
-        // 3) Tracers — линии от взгляда до игроков и блоков-целей
+        // 3) Tracers
         if (FeatureState.lineGuides && lineLayer != null) {
             Vec3 eyePos = mc.player.getEyePosition(1.0f);
 
@@ -172,48 +147,7 @@ public class VangixClientEntry implements ClientModInitializer {
         poseStack.popPose();
     }
 
-    private static PoseStack extractPoseStack(Object[] args) {
-        if (args == null) return null;
-        for (Object arg : args) {
-            if (arg instanceof PoseStack ps) return ps;
-            if (arg != null) {
-                for (String mName : new String[]{"poseStack", "matrixStack", "getPoseStack", "getMatrixStack"}) {
-                    try {
-                        Method m = arg.getClass().getMethod(mName);
-                        Object res = m.invoke(arg);
-                        if (res instanceof PoseStack ps) return ps;
-                    } catch (Throwable ignored) {
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
     private static Vec3 extractCameraPos(Minecraft mc, Object[] args) {
-        if (args != null) {
-            for (Object arg : args) {
-                if (arg != null) {
-                    for (String mName : new String[]{"camera", "getCamera"}) {
-                        try {
-                            Method m = arg.getClass().getMethod(mName);
-                            Object cam = m.invoke(arg);
-                            if (cam != null) {
-                                for (String posName : new String[]{"position", "getPosition"}) {
-                                    try {
-                                        Method posMethod = cam.getClass().getMethod(posName);
-                                        Object pos = posMethod.invoke(cam);
-                                        if (pos instanceof Vec3 v) return v;
-                                    } catch (Throwable ignored) {
-                                    }
-                                }
-                            }
-                        } catch (Throwable ignored) {
-                        }
-                    }
-                }
-            }
-        }
         if (mc.gameRenderer != null) {
             for (String camMethod : new String[]{"mainCamera", "camera", "getCamera"}) {
                 try {
@@ -237,20 +171,6 @@ public class VangixClientEntry implements ClientModInitializer {
     }
 
     private static Object extractBufferSource(Minecraft mc, Object[] args) {
-        if (args != null) {
-            for (Object arg : args) {
-                if (arg != null) {
-                    for (String mName : new String[]{"consumers", "bufferSource", "getConsumers", "getBufferSource"}) {
-                        try {
-                            Method m = arg.getClass().getMethod(mName);
-                            Object res = m.invoke(arg);
-                            if (res != null) return res;
-                        } catch (Throwable ignored) {
-                        }
-                    }
-                }
-            }
-        }
         if (mc != null) {
             for (String rbMethod : new String[]{"renderBuffers", "getRenderBuffers"}) {
                 try {
