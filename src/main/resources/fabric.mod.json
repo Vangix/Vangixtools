@@ -14,7 +14,7 @@
       "com.vangix.tools.VangixClientEntry"
     ]
   },
-  "mixins": [],
+  "mixins": ["vangixtools.mixins.json"],
   "depends": {
     "fabricloader": ">=0.18.4",
     "minecraft": "~26.3",
