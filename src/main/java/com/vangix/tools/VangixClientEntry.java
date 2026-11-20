@@ -12,12 +12,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.StringJoiner;
 
 public class VangixClientEntry implements ClientModInitializer {
 
@@ -26,7 +26,6 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static long lastOverlayFrameId = -1L;
     private static boolean loggedRenderDebug = false;
-    private static boolean loggedBufferIntrospect = false;
 
     @Override
     public void onInitializeClient() {
@@ -67,6 +66,7 @@ public class VangixClientEntry implements ClientModInitializer {
         if (frameToken == lastOverlayFrameId) return;
         lastOverlayFrameId = frameToken;
 
+        Object gizmoCollector = extractGizmoCollector(mc, levelRenderer);
         Vec3 camPos = extractCameraPos(mc, levelRenderer);
         Object renderBuffers = extractRenderBuffers(mc, levelRenderer);
         Object bufferSource = extractBufferSourceFromRenderBuffers(renderBuffers, levelRenderer);
@@ -75,21 +75,21 @@ public class VangixClientEntry implements ClientModInitializer {
 
         if (!loggedRenderDebug) {
             loggedRenderDebug = true;
-            System.out.println("[VangixTools] Overlay debug -> camPos=" + camPos
-                    + ", renderBuffers=" + (renderBuffers != null ? renderBuffers.getClass().getName() : "null")
+            System.out.println("[VangixTools] Overlay debug -> gizmoCollector="
+                    + (gizmoCollector != null ? gizmoCollector.getClass().getName() : "null")
                     + ", bufferSource=" + (bufferSource != null ? bufferSource.getClass().getName() : "null")
-                    + ", quadLayer=" + (quadLayer != null ? quadLayer : "null")
-                    + ", lineLayer=" + (lineLayer != null ? lineLayer : "null")
                     + ", blocks=" + WorldOverlayRenderer.getBlockTargets().size()
                     + ", chunks=" + WorldOverlayRenderer.getChunkTargets().size()
                     + ", players=" + WorldOverlayRenderer.getPlayerTargets().size());
         }
 
-        if ((bufferSource == null || (quadLayer == null && lineLayer == null)) && !loggedBufferIntrospect) {
-            loggedBufferIntrospect = true;
-            logRenderBuffersIntrospection(renderBuffers);
+        // Основной путь для MC 26.3: рисуем через Gizmo-коллектор (линии и рамки/боксы)
+        if (gizmoCollector != null) {
+            renderWithGizmos(mc, gizmoCollector);
+            return;
         }
 
+        // Запасной путь, если bufferSource и слои доступны
         if (bufferSource != null && (quadLayer != null || lineLayer != null)) {
             PoseStack poseStack = new PoseStack();
             poseStack.pushPose();
@@ -150,24 +150,121 @@ public class VangixClientEntry implements ClientModInitializer {
         }
     }
 
-    private static void logRenderBuffersIntrospection(Object renderBuffers) {
-        if (renderBuffers == null) {
-            System.out.println("[VangixTools] RenderBuffers is null");
-            return;
-        }
-        StringJoiner mJoiner = new StringJoiner(", ");
-        for (Method m : renderBuffers.getClass().getMethods()) {
-            if (m.getDeclaringClass() != Object.class) {
-                mJoiner.add(m.getReturnType().getSimpleName() + " " + m.getName() + "(" + m.getParameterCount() + ")");
+    private static void renderWithGizmos(Minecraft mc, Object gizmoCollector) {
+        // 1) Chunk Finder — контур чанка 16x16
+        if (FeatureState.areaScanner) {
+            for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
+                int argb = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.65f, ct.lineAlpha()));
+                double y = ct.y() + 0.02;
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.minZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.maxZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.maxZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.minZ()), argb, 2.0f);
             }
         }
-        StringJoiner fJoiner = new StringJoiner(", ");
-        for (Field f : renderBuffers.getClass().getDeclaredFields()) {
-            fJoiner.add(f.getType().getSimpleName() + " " + f.getName());
+
+        // 2) Block ESP — 3D-рамка блока
+        if (FeatureState.containerSight) {
+            for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
+                BlockPos p = box.pos();
+                AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
+                int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.75f, box.lineAlpha()));
+                gizmoBoxOutline(gizmoCollector, aabb, lineColor, 2.0f);
+            }
         }
-        System.out.println("[VangixTools] RenderBuffers (" + renderBuffers.getClass().getName() + ")");
-        System.out.println("  methods: " + mJoiner);
-        System.out.println("  fields:  " + fJoiner);
+
+        // 3) Tracers — линии от взгляда до целей
+        if (FeatureState.lineGuides && mc.player != null) {
+            Vec3 eyePos = mc.player.getEyePosition(1.0f).subtract(0.0, 0.12, 0.0);
+
+            for (WorldOverlayRenderer.PlayerTarget pt : WorldOverlayRenderer.getPlayerTargets()) {
+                if (!pt.tracer() || pt.player() == null) continue;
+                Vec3 targetPos = pt.player().position().add(0.0, pt.player().getBbHeight() * 0.5, 0.0);
+                int color = toArgb(pt.r(), pt.g(), pt.b(), 0.95f);
+                gizmoLine(gizmoCollector, eyePos, targetPos, color, 2.0f);
+            }
+
+            for (WorldOverlayRenderer.TargetBox tb : WorldOverlayRenderer.getTracerBlockTargets()) {
+                Vec3 targetPos = Vec3.atCenterOf(tb.pos());
+                int color = toArgb(tb.r(), tb.g(), tb.b(), 0.90f);
+                gizmoLine(gizmoCollector, eyePos, targetPos, color, 1.8f);
+            }
+        }
+    }
+
+    private static void gizmoBoxOutline(Object collector, AABB b, int argb, float width) {
+        Vec3 p000 = new Vec3(b.minX, b.minY, b.minZ);
+        Vec3 p100 = new Vec3(b.maxX, b.minY, b.minZ);
+        Vec3 p101 = new Vec3(b.maxX, b.minY, b.maxZ);
+        Vec3 p001 = new Vec3(b.minX, b.minY, b.maxZ);
+
+        Vec3 p010 = new Vec3(b.minX, b.maxY, b.minZ);
+        Vec3 p110 = new Vec3(b.maxX, b.maxY, b.minZ);
+        Vec3 p111 = new Vec3(b.maxX, b.maxY, b.maxZ);
+        Vec3 p011 = new Vec3(b.minX, b.maxY, b.maxZ);
+
+        gizmoLine(collector, p000, p100, argb, width);
+        gizmoLine(collector, p100, p101, argb, width);
+        gizmoLine(collector, p101, p001, argb, width);
+        gizmoLine(collector, p001, p000, argb, width);
+
+        gizmoLine(collector, p010, p110, argb, width);
+        gizmoLine(collector, p110, p111, argb, width);
+        gizmoLine(collector, p111, p011, argb, width);
+        gizmoLine(collector, p011, p010, argb, width);
+
+        gizmoLine(collector, p000, p010, argb, width);
+        gizmoLine(collector, p100, p110, argb, width);
+        gizmoLine(collector, p101, p111, argb, width);
+        gizmoLine(collector, p001, p011, argb, width);
+    }
+
+    private static void gizmoLine(Object collector, Vec3 from, Vec3 to, int argb, float width) {
+        if (collector == null) return;
+        for (Method m : collector.getClass().getMethods()) {
+            String name = m.getName().toLowerCase();
+            if (!name.contains("line")) continue;
+            Class<?>[] params = m.getParameterTypes();
+
+            try {
+                if (params.length == 3 && params[0] == Vec3.class && params[1] == Vec3.class && params[2] == int.class) {
+                    m.invoke(collector, from, to, argb);
+                    return;
+                }
+                if (params.length == 4 && params[0] == Vec3.class && params[1] == Vec3.class && params[2] == int.class && params[3] == float.class) {
+                    m.invoke(collector, from, to, argb, width);
+                    return;
+                }
+                if (params.length == 4 && params[0] == Vec3.class && params[1] == Vec3.class && params[2] == float.class && params[3] == int.class) {
+                    m.invoke(collector, from, to, width, argb);
+                    return;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static Object extractGizmoCollector(Minecraft mc, Object levelRenderer) {
+        Object fromLevel = invokeOrReadAny(
+                levelRenderer,
+                new String[]{"renderThreadGizmos", "getRenderThreadGizmos", "perTickGizmos", "getPerTickGizmos"},
+                new String[]{"renderThreadGizmos", "perTickGizmos"}
+        );
+        if (fromLevel != null) return fromLevel;
+
+        return invokeOrReadAny(
+                mc,
+                new String[]{"perTickGizmos", "getPerTickGizmos"},
+                new String[]{"perTickGizmos"}
+        );
+    }
+
+    private static int toArgb(float r, float g, float b, float a) {
+        int ia = Math.max(0, Math.min(255, Math.round(a * 255.0f)));
+        int ir = Math.max(0, Math.min(255, Math.round(r * 255.0f)));
+        int ig = Math.max(0, Math.min(255, Math.round(g * 255.0f)));
+        int ib = Math.max(0, Math.min(255, Math.round(b * 255.0f)));
+        return (ia << 24) | (ir << 16) | (ig << 8) | ib;
     }
 
     private static Object extractRenderBuffers(Minecraft mc, Object levelRenderer) {
