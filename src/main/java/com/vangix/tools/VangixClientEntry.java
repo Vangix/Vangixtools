@@ -352,7 +352,6 @@ public class VangixClientEntry implements ClientModInitializer {
         if (vc == null) return;
         Matrix4f mat = poseStack.last().pose();
 
-        // Верх и низ
         vc.addVertex(mat, (float) x1, (float) y2, (float) z1).setColor(r, g, b, a);
         vc.addVertex(mat, (float) x1, (float) y2, (float) z2).setColor(r, g, b, a);
         vc.addVertex(mat, (float) x2, (float) y2, (float) z2).setColor(r, g, b, a);
@@ -363,7 +362,6 @@ public class VangixClientEntry implements ClientModInitializer {
         vc.addVertex(mat, (float) x2, (float) y1, (float) z2).setColor(r, g, b, a);
         vc.addVertex(mat, (float) x1, (float) y1, (float) z2).setColor(r, g, b, a);
 
-        // Боковые грани
         vc.addVertex(mat, (float) x1, (float) y1, (float) z1).setColor(r, g, b, a);
         vc.addVertex(mat, (float) x1, (float) y2, (float) z1).setColor(r, g, b, a);
         vc.addVertex(mat, (float) x2, (float) y2, (float) z1).setColor(r, g, b, a);
@@ -381,57 +379,4 @@ public class VangixClientEntry implements ClientModInitializer {
 
         vc.addVertex(mat, (float) x2, (float) y1, (float) z1).setColor(r, g, b, a);
         vc.addVertex(mat, (float) x2, (float) y2, (float) z1).setColor(r, g, b, a);
-        vc.addVertex(mat, (float) x2, (float) y2, (float) z2).setColor(r, g, b, a);
-        vc.addVertex(mat, (float) x2, (float) y1, (float) z2).setColor(r, g, b, a);
-    }
-
-    private static void drawBoxOutline(PoseStack poseStack, Object bufferSource, Object layer,
-                                       double x1, double y1, double z1, double x2, double y2, double z2,
-                                       float r, float g, float b, float a) {
-        drawHorizontalOutline(poseStack, bufferSource, layer, x1, y1, z1, x2, z2, r, g, b, a);
-        drawHorizontalOutline(poseStack, bufferSource, layer, x1, y2, z1, x2, z2, r, g, b, a);
-
-        drawLine(poseStack, bufferSource, layer, new Vec3(x1, y1, z1), new Vec3(x1, y2, z1), r, g, b, a);
-        drawLine(poseStack, bufferSource, layer, new Vec3(x2, y1, z1), new Vec3(x2, y2, z1), r, g, b, a);
-        drawLine(poseStack, bufferSource, layer, new Vec3(x2, y1, z2), new Vec3(x2, y2, z2), r, g, b, a);
-        drawLine(poseStack, bufferSource, layer, new Vec3(x1, y1, z2), new Vec3(x1, y2, z2), r, g, b, a);
-    }
-
-    private static void drawLine(PoseStack poseStack, Object bufferSource, Object layer,
-                                 Vec3 from, Vec3 to, float r, float g, float b, float a) {
-        VertexConsumer vc = obtainVertexConsumer(bufferSource, layer);
-        if (vc == null) return;
-        Matrix4f mat = poseStack.last().pose();
-        vc.addVertex(mat, (float) from.x, (float) from.y, (float) from.z).setColor(r, g, b, a);
-        vc.addVertex(mat, (float) to.x, (float) to.y, (float) to.z).setColor(r, g, b, a);
-    }
-
-    private static void handleMenuToggle(Minecraft client) {
-        if (OPEN_MENU_KEY == null) return;
-
-        boolean clicked = false;
-        while (OPEN_MENU_KEY.consumeClick()) {
-            clicked = true;
-        }
-
-        if (!clicked) return;
-
-        Screen current = getCurrentScreenSafe(client);
-        if (current instanceof ControlPanelScreen) {
-            setScreenSafe(client, null);
-        } else if (current == null) {
-            setScreenSafe(client, new ControlPanelScreen());
-        }
-    }
-
-    static Screen getCurrentScreenSafe(Minecraft client) {
-        if (client == null) return null;
-        for (String methodName : new String[]{"getScreen", "screen"}) {
-            try {
-                Method m = client.getClass().getMethod(methodName);
-                Object res = m.invoke(client);
-                if (res instanceof Screen s) return s;
-            } catch (Throwable ignored) {
-            }
-        }
-        for (String fieldName : new String[]{"screen
+        vc.addVertex(mat, (float) x2, (float) y2, (float) z2).setColor(r, g, b,
