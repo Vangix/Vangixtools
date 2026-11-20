@@ -1,7 +1,9 @@
 package com.vangix.tools.mixin;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import com.vangix.tools.VangixClientEntry;
 import net.minecraft.client.renderer.LevelRenderer;
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -11,8 +13,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class LevelRendererOverlayMixin {
 
     @Inject(method = "*", at = @At("RETURN"), require = 0)
-    private void vangixtools$afterLevelRendererMethod(CallbackInfo ci) {
-        // Временный безопасный хук: вызываем оверлеи только если в аргументах/рендерере всё готово
-        // Позже сузим метод на конкретный renderLevel после проверки имени метода в логах
+    private void vangixtools$onReturn(CallbackInfo ci) {
+        // Без доступа к аргументам метода в @Inject(method="*") безопаснее вызывать
+        // через VangixClientEntry.renderWorldOverlaysFromLevelRenderer(this)
+        VangixClientEntry.renderWorldOverlaysFromLevelRenderer(this);
     }
 }
