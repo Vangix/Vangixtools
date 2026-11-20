@@ -5,6 +5,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.*;
@@ -22,9 +23,13 @@ public class WorldOverlayRenderer {
 
     public record PlayerTarget(Player player, String label, float r, float g, float b, boolean tracer) {}
 
+    // Плоскость подозрительного чанка (16x16 на высоте sampleY), как на скрине
+    public record ChunkTarget(int minX, int minZ, int maxX, int maxZ, double y, float r, float g, float b, float fillAlpha, float lineAlpha) {}
+
     private static final List<TargetBox> BLOCK_TARGETS = new ArrayList<>();
     private static final List<TargetBox> TRACER_BLOCK_TARGETS = new ArrayList<>();
     private static final List<PlayerTarget> PLAYER_TARGETS = new ArrayList<>();
+    private static final List<ChunkTarget> CHUNK_TARGETS = new ArrayList<>();
 
     private static int scanCooldown = 0;
 
@@ -38,6 +43,10 @@ public class WorldOverlayRenderer {
 
     public static List<PlayerTarget> getPlayerTargets() {
         return PLAYER_TARGETS;
+    }
+
+    public static List<ChunkTarget> getChunkTargets() {
+        return CHUNK_TARGETS;
     }
 
     public static float[] argbToRgbFloats(int argb) {
@@ -58,6 +67,7 @@ public class WorldOverlayRenderer {
             BLOCK_TARGETS.clear();
             TRACER_BLOCK_TARGETS.clear();
             PLAYER_TARGETS.clear();
+            CHUNK_TARGETS.clear();
             return;
         }
 
@@ -76,6 +86,29 @@ public class WorldOverlayRenderer {
         }
 
         collectPlayerTargets(mc);
+        collectChunkTargets(mc);
+    }
+
+    private static void collectChunkTargets(Minecraft mc) {
+        CHUNK_TARGETS.clear();
+        if (!FeatureState.areaScanner) return;
+
+        ChunkBaseFinder.tick(mc);
+        for (ChunkBaseFinder.SuspiciousChunk sc : ChunkBaseFinder.getFoundChunks()) {
+            ChunkPos cp = sc.chunkPos();
+            int minX = cp.getMinBlockX();
+            int minZ = cp.getMinBlockZ();
+            int maxX = cp.getMaxBlockX() + 1;
+            int maxZ = cp.getMaxBlockZ() + 1;
+            double y = sc.sampleY() + 0.05;
+
+            // Зелёная полупрозрачная плоскость чанка, как на примере
+            CHUNK_TARGETS.add(new ChunkTarget(
+                    minX, minZ, maxX, maxZ, y,
+                    0.15f, 0.90f, 0.25f,
+                    0.35f, 0.90f
+            ));
+        }
     }
 
     private static void scanWorldBlocks(Minecraft mc, boolean needEsp, boolean needBlockTracers) {
