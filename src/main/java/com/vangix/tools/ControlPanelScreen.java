@@ -7,7 +7,6 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.awt.Color;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,7 +19,7 @@ import java.util.function.IntSupplier;
 
 public class ControlPanelScreen extends Screen {
 
-    private static final int PANEL_W = 104;
+    private static final int PANEL_W = 108;
     private static final int PANEL_GAP = 6;
     private static final int HEADER_H = 13;
     private static final int ROW_H = 12;
@@ -29,19 +28,15 @@ public class ControlPanelScreen extends Screen {
     private static final int START_X = 8;
     private static final int START_Y = 8;
 
-    // Зоны клика в строке модуля:
-    // - цветной квадратик (если есть цвет у модуля)
-    // - стрелочка справа (если есть доп. настройки)
-    // - всё остальное — включение/выключение функции
-    private static final int SWATCH_HIT_W = 11;
-    private static final int ARROW_HIT_W = 14;
+    private static final int SWATCH_W = 8;
+    private static final int ARROW_W = 12;
 
     private static final int PANEL_BG = 0xD8141820;
     private static final int HEADER_BG = 0xE6222938;
     private static final int HEADER_ACCENT = 0xFF5B7CFA;
     private static final int ROW_HOVER = 0x443B4761;
     private static final int ARROW_HOVER = 0x555B7CFA;
-    private static final int ACTIVE_ROW_BG = 0x335B7CFA;
+    private static final int ACTIVE_ROW_BG = 0x385B7CFA;
     private static final int ACTIVE_TEXT = 0xFF8AB4F8;
     private static final int INACTIVE_TEXT = 0xFFD8DEE9;
     private static final int SUB_BG = 0xCC1B202C;
@@ -174,12 +169,16 @@ public class ControlPanelScreen extends Screen {
         panelScroll.putIfAbsent(title, 0);
     }
 
+    private int getSwatchLeftEdge(ModuleNode node, int px) {
+        return node.hasColor() ? (px + PANEL_W - SWATCH_W - 1) : (px + PANEL_W);
+    }
+
     private int getArrowRightEdge(ModuleNode node, int px) {
-        return node.hasColor() ? (px + PANEL_W - SWATCH_HIT_W) : (px + PANEL_W - 1);
+        return getSwatchLeftEdge(node, px);
     }
 
     private int getArrowLeftEdge(ModuleNode node, int px) {
-        return getArrowRightEdge(node, px) - ARROW_HIT_W;
+        return node.hasSubSettings() ? (getArrowRightEdge(node, px) - ARROW_W) : getArrowRightEdge(node, px);
     }
 
     private void openColorWheel(String title, IntSupplier getter, IntConsumer setter) {
@@ -239,7 +238,7 @@ public class ControlPanelScreen extends Screen {
             return;
         }
 
-        float targetExpand = (expandedNode != null && !expandedNode.subSettings.isEmpty()) ? 1.0f : 0.0f;
+        float targetExpand = (expandedNode != null && expandedNode.hasSubSettings()) ? 1.0f : 0.0f;
         expandAnim = stepTowards(expandAnim, targetExpand, dt, 5.5f);
 
         float targetPicker = (activeColorSetter != null) ? 1.0f : 0.0f;
@@ -316,7 +315,7 @@ public class ControlPanelScreen extends Screen {
                 int idx = r + scroll;
                 if (idx >= items.size()) break;
                 ModuleNode node = items.get(idx);
-                if (node == expandedNode && !node.subSettings.isEmpty() && easedExpand > 0.01f) {
+                if (node == expandedNode && node.hasSubSettings() && easedExpand > 0.01f) {
                     extraH += Math.round(node.subSettings.size() * SUB_ROW_H * easedExpand);
                 }
             }
@@ -356,6 +355,7 @@ public class ControlPanelScreen extends Screen {
 
                 if (enabled) {
                     graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, scaleAlpha(ACTIVE_ROW_BG, easedScreen));
+                    graphics.fill(px + 1, ry, px + 2, ry + ROW_H, scaleAlpha(ACTIVE_TEXT, easedScreen));
                 }
                 if (hProg > 0.01f) {
                     int hoverFill = scaleAlpha(ROW_HOVER, hProg * easedScreen);
@@ -367,7 +367,7 @@ public class ControlPanelScreen extends Screen {
                 int rawTextCol = enabled ? ACTIVE_TEXT : INACTIVE_TEXT;
                 drawText(graphics, label, px + 4 + hoverShiftX, ry + 2, scaleAlpha(rawTextCol, easedScreen));
 
-                if (!node.subSettings.isEmpty()) {
+                if (node.hasSubSettings()) {
                     boolean open = expandedNode == node;
                     boolean arrowHover = hovered
                             && mouseX >= getArrowLeftEdge(node, px)
@@ -382,7 +382,7 @@ public class ControlPanelScreen extends Screen {
 
                 curY += ROW_H;
 
-                if (node == expandedNode && !node.subSettings.isEmpty() && easedExpand > 0.01f) {
+                if (node == expandedNode && node.hasSubSettings() && easedExpand > 0.01f) {
                     int fullSubH = node.subSettings.size() * SUB_ROW_H;
                     int animSubH = Math.round(fullSubH * easedExpand);
                     if (animSubH > 0) {
@@ -569,31 +569,6 @@ public class ControlPanelScreen extends Screen {
         return v instanceof Number n ? n.doubleValue() : 0.0;
     }
 
-    private int extractButton(MouseButtonEvent event) {
-        Object v = invokeNoArg(event, "button", "getButton", "buttonCode", "input", "getInput");
-        if (v instanceof Number n) return n.intValue();
-        Object info = invokeNoArg(event, "buttonInfo", "getButtonInfo");
-        if (info != null) {
-            Object b = invokeNoArg(info, "button", "getButton", "code");
-            if (b instanceof Number n) return n.intValue();
-        }
-        if (event != null) {
-            for (Field f : event.getClass().getDeclaredFields()) {
-                if (f.getType() == int.class) {
-                    try {
-                        f.setAccessible(true);
-                        String fname = f.getName().toLowerCase();
-                        if (fname.contains("button") || fname.contains("key") || fname.contains("code")) {
-                            return f.getInt(event);
-                        }
-                    } catch (Throwable ignored) {
-                    }
-                }
-            }
-        }
-        return 0;
-    }
-
     private Object invokeNoArg(Object target, String... names) {
         if (target == null) return null;
         for (String name : names) {
@@ -612,7 +587,6 @@ public class ControlPanelScreen extends Screen {
 
         double mouseX = extractX(event);
         double mouseY = extractY(event);
-        int button = extractButton(event);
 
         if (activeColorSetter != null) {
             int boxW = 132;
@@ -668,29 +642,25 @@ public class ControlPanelScreen extends Screen {
                 if (mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H) {
 
-                    // Клик по цветному квадратику справа открывает колор-пикер
-                    if (node.hasColor() && mouseX >= px + PANEL_W - SWATCH_HIT_W) {
+                    if (node.hasColor() && mouseX >= getSwatchLeftEdge(node, px)) {
                         openColorWheel(node.name + " Color", node.colorGetter, node.colorSetter);
                         return true;
                     }
 
-                    // Клик по стрелочке справа (или ПКМ, если button == 1) раскрывает/скрывает доп. настройки
-                    boolean hitArrowArea = !node.subSettings.isEmpty()
+                    if (node.hasSubSettings()
                             && mouseX >= getArrowLeftEdge(node, px)
-                            && mouseX < getArrowRightEdge(node, px);
-                    if (hitArrowArea || (button == 1 && !node.subSettings.isEmpty())) {
+                            && mouseX < getArrowRightEdge(node, px)) {
                         expandedNode = (expandedNode == node) ? null : node;
                         return true;
                     }
 
-                    // Клик по тексту / основной части строки включает/выключает функцию
                     node.setter.accept(!node.getter.getAsBoolean());
                     return true;
                 }
 
                 curY += ROW_H;
 
-                if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.25f) {
+                if (node == expandedNode && node.hasSubSettings() && expandAnim > 0.25f) {
                     int fullSubH = node.subSettings.size() * SUB_ROW_H;
                     int animSubH = Math.round(fullSubH * expandAnim);
                     int maxVisibleSubRows = animSubH / SUB_ROW_H;
@@ -845,6 +815,10 @@ public class ControlPanelScreen extends Screen {
     ) {
         ModuleNode(String name, BooleanSupplier getter, Consumer<Boolean> setter, List<SubSetting> subSettings) {
             this(name, getter, setter, subSettings, null, null);
+        }
+
+        boolean hasSubSettings() {
+            return subSettings != null && !subSettings.isEmpty();
         }
 
         boolean hasColor() {
