@@ -16,6 +16,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.StringJoiner;
@@ -28,6 +29,7 @@ public class VangixClientEntry implements ClientModInitializer {
     private static long lastOverlayFrameId = -1L;
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
+    private static boolean dumpedGizmoClasses = false;
 
     @Override
     public void onInitializeClient() {
@@ -98,6 +100,11 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
             System.out.println("[VangixTools] SimpleGizmoCollector methods: " + sj);
+        }
+
+        if (!dumpedGizmoClasses) {
+            dumpedGizmoClasses = true;
+            dumpGizmoPackageClasses();
         }
 
         if (gizmoCollector != null) {
@@ -608,26 +615,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
         return mapping;
-package com.vangixtools;
-
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.util.StringJoiner;
-import net.fabricmc.api.ClientModInitializer;
-
-public class VangixClientEntry implements ClientModInitializer {
-    private static boolean dumpedGizmos = false;
-
-    @Override
-    public void onInitializeClient() {
-        // Регистрация кейбиндов, событий и инициализация клиента
-    }
-
-    public static void onWorldOverlayRender() {
-        if (!dumpedGizmos) {
-            dumpedGizmos = true;
-            dumpGizmoPackageClasses();
-        }
     }
 
     private static void dumpGizmoPackageClasses() {
@@ -668,7 +655,6 @@ public class VangixClientEntry implements ClientModInitializer {
 
                 System.out.println("[VangixTools][GizmoDump] " + className + " -> " + entries);
             } catch (Throwable ignored) {
-                // Класс с таким именем отсутствует в этой версии сборки
             }
         }
     }
@@ -680,5 +666,4 @@ public class VangixClientEntry implements ClientModInitializer {
         }
         return joiner.toString();
     }
-}    }
 }
