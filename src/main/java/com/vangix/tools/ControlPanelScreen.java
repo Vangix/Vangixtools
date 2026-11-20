@@ -1,10 +1,10 @@
 package com.vangix.tools;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 
 import java.awt.Color;
 import java.lang.reflect.Method;
@@ -44,7 +44,6 @@ public class ControlPanelScreen extends Screen {
     private final Map<String, Float> hoverProgressMap = new LinkedHashMap<>();
     private int horizontalScroll = 0;
 
-    // Анимация открытия/закрытия экрана и раскрытия подпунктов
     private long lastFrameNs = System.nanoTime();
     private float screenAnim = 0.0f;
     private boolean closingAnimated = false;
@@ -52,7 +51,6 @@ public class ControlPanelScreen extends Screen {
     private ModuleNode expandedNode = null;
     private float expandAnim = 0.0f;
 
-    // Модальный цветовой круг + анимация появления
     private IntSupplier activeColorGetter = null;
     private IntConsumer activeColorSetter = null;
     private String activeColorTitle = "";
@@ -213,7 +211,7 @@ public class ControlPanelScreen extends Screen {
 
         if (closingAnimated && screenAnim <= 0.01f && this.minecraft != null) {
             closingAnimated = false;
-            this.minecraft.setScreen(null);
+            VangixClientEntry.setScreenSafe(this.minecraft, null);
             return;
         }
 
@@ -244,7 +242,6 @@ public class ControlPanelScreen extends Screen {
             String title = entry.getKey();
             List<ModuleNode> items = entry.getValue();
 
-            // Лёгкий каскадный сдвиг колонок при открытии/закрытии
             int colDelaySlide = Math.round((1.0f - easedScreen) * (-6.0f - colIdx * 3.0f));
             int px = START_X + colIdx * (PANEL_W + PANEL_GAP) - horizontalScroll;
             int py = START_Y + ySlide + colDelaySlide;
@@ -654,7 +651,7 @@ public class ControlPanelScreen extends Screen {
     @Override
     public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
         int keyCode = extractKeyCode(event);
-        if (keyCode == GLFW.GLFW_KEY_RIGHT_SHIFT) {
+        if (keyCode == InputConstants.KEY_RSHIFT) {
             if (activeColorSetter != null) {
                 closeColorWheel();
                 return true;
@@ -666,7 +663,7 @@ public class ControlPanelScreen extends Screen {
     }
 
     private int extractKeyCode(Object event) {
-        Object v = invokeNoArg(event, "key", "getKey", "keyCode", "getKeyCode");
+        Object v = invokeNoArg(event, "key", "getKey", "keyCode", "getKeyCode", "input");
         return v instanceof Number n ? n.intValue() : -1;
     }
 
