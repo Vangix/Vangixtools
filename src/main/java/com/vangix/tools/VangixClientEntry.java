@@ -6,7 +6,9 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
+import org.lwjgl.glfw.GLFW;
 
 import java.lang.reflect.Method;
 
@@ -14,7 +16,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     public static final String MOD_ID = "vangixtools";
     public static KeyMapping OPEN_MENU_KEY;
-    private static boolean menuOpen = false;
+    private static boolean prevRShiftDown = false;
 
     @Override
     public void onInitializeClient() {
@@ -28,19 +30,11 @@ public class VangixClientEntry implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) {
-                menuOpen = false;
+                prevRShiftDown = false;
                 return;
             }
 
-            while (OPEN_MENU_KEY.consumeClick()) {
-                if (menuOpen) {
-                    client.gui.setScreen(null);
-                    menuOpen = false;
-                } else {
-                    client.gui.setScreen(new ControlPanelScreen());
-                    menuOpen = true;
-                }
-            }
+            handleMenuToggle(client);
 
             HelperTasks.tick(client);
             WorldOverlayRenderer.collectTargets(client);
@@ -54,6 +48,28 @@ public class VangixClientEntry implements ClientModInitializer {
                         tickDelta.getGameTimeDeltaPartialTick(true)
                 )
         );
+    }
+
+    private static void handleMenuToggle(Minecraft client) {
+        long windowHandle = client.getWindow().handle();
+        boolean rShiftDown = GLFW.glfwGetKey(windowHandle, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
+        boolean justPressed = rShiftDown && !prevRShiftDown;
+        prevRShiftDown = rShiftDown;
+
+        boolean consumed = false;
+        if (OPEN_MENU_KEY != null) {
+            while (OPEN_MENU_KEY.consumeClick()) {
+                consumed = true;
+            }
+        }
+
+        if (justPressed || (consumed && !(client.screen instanceof ControlPanelScreen))) {
+            if (client.screen instanceof ControlPanelScreen) {
+                client.setScreen(null);
+            } else if (client.screen == null) {
+                client.setScreen(new ControlPanelScreen());
+            }
+        }
     }
 
     private static KeyMapping registerKeyMappingSafe(KeyMapping mapping) {
