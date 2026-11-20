@@ -17,6 +17,7 @@ import org.joml.Matrix4f;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.StringJoiner;
 
 public class VangixClientEntry implements ClientModInitializer {
 
@@ -25,6 +26,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static long lastOverlayFrameId = -1L;
     private static boolean loggedRenderDebug = false;
+    private static boolean loggedBufferIntrospect = false;
 
     @Override
     public void onInitializeClient() {
@@ -81,7 +83,15 @@ public class VangixClientEntry implements ClientModInitializer {
                     + ", players=" + WorldOverlayRenderer.getPlayerTargets().size());
         }
 
-        if (bufferSource == null || (quadLayer == null && lineLayer == null)) {
+        if (bufferSource == null) {
+            if (!loggedBufferIntrospect) {
+                loggedBufferIntrospect = true;
+                logBufferIntrospection(mc, levelRenderer);
+            }
+            return;
+        }
+
+        if (quadLayer == null && lineLayer == null) {
             return;
         }
 
@@ -144,6 +154,47 @@ public class VangixClientEntry implements ClientModInitializer {
         }
 
         poseStack.popPose();
+    }
+
+    private static void logBufferIntrospection(Minecraft mc, Object levelRenderer) {
+        System.out.println("[VangixTools] Buffer introspection start:");
+        if (mc != null) {
+            System.out.println("  mc methods: " + describeZeroArgMethods(mc.getClass()));
+            System.out.println("  mc fields: " + describeFields(mc.getClass()));
+            Object rb = invokeOrReadAny(
+                    mc,
+                    new String[]{"renderBuffers", "getRenderBuffers"},
+                    new String[]{"renderBuffers"}
+            );
+            if (rb != null) {
+                System.out.println("  renderBuffers (" + rb.getClass().getName() + ") methods: "
+                        + describeZeroArgMethods(rb.getClass()));
+                System.out.println("  renderBuffers fields: " + describeFields(rb.getClass()));
+            }
+        }
+        if (levelRenderer != null) {
+            System.out.println("  levelRenderer (" + levelRenderer.getClass().getName() + ") methods: "
+                    + describeZeroArgMethods(levelRenderer.getClass()));
+            System.out.println("  levelRenderer fields: " + describeFields(levelRenderer.getClass()));
+        }
+    }
+
+    private static String describeZeroArgMethods(Class<?> cls) {
+        StringJoiner sj = new StringJoiner(", ");
+        for (Method m : cls.getMethods()) {
+            if (m.getParameterCount() == 0 && m.getDeclaringClass() != Object.class) {
+                sj.add(m.getReturnType().getSimpleName() + " " + m.getName() + "()");
+            }
+        }
+        return sj.toString();
+    }
+
+    private static String describeFields(Class<?> cls) {
+        StringJoiner sj = new StringJoiner(", ");
+        for (Field f : cls.getDeclaredFields()) {
+            sj.add(f.getType().getSimpleName() + " " + f.getName());
+        }
+        return sj.toString();
     }
 
     private static Vec3 extractCameraPos(Minecraft mc, Object[] args) {
