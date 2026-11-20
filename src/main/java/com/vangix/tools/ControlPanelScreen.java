@@ -18,43 +18,46 @@ import java.util.function.IntSupplier;
 
 public class ControlPanelScreen extends Screen {
 
-    private static final int PANEL_W = 100;
-    private static final int PANEL_GAP = 5;
+    private static final int PANEL_W = 104;
+    private static final int PANEL_GAP = 6;
     private static final int HEADER_H = 13;
-    private static final int ROW_H = 11;
+    private static final int ROW_H = 12;
+    private static final int SUB_ROW_H = 11;
     private static final int MAX_VISIBLE_ROWS = 8;
-    private static final int START_X = 6;
-    private static final int START_Y = 6;
+    private static final int START_X = 8;
+    private static final int START_Y = 8;
 
-    private static final int PANEL_BG = 0xCC101624;
-    private static final int HEADER_GRAD_TOP = 0xE638BDF8;
-    private static final int HEADER_GRAD_BOT = 0xE6F472B6;
-    private static final int ROW_HOVER_BG = 0x5538BDF8;
-    private static final int ACTIVE_ROW_BG = 0x3DF472B6;
-    private static final int ACTIVE_TEXT = 0xFFF9A8D4;
-    private static final int INACTIVE_TEXT = 0xFFE0F2FE;
-    private static final int ACCENT_BLUE = 0xFF38BDF8;
-    private static final int ACCENT_PINK = 0xFFF472B6;
-    private static final int BORDER_COLOR = 0xAA7DD3FC;
+    // Спокойная тёмно-графитовая палитра без кислотного неона
+    private static final int PANEL_BG = 0xD8141820;
+    private static final int HEADER_BG = 0xE6222938;
+    private static final int HEADER_ACCENT = 0xFF5B7CFA;
+    private static final int ROW_HOVER = 0x443B4761;
+    private static final int ACTIVE_ROW_BG = 0x335B7CFA;
+    private static final int ACTIVE_TEXT = 0xFF8AB4F8;
+    private static final int INACTIVE_TEXT = 0xFFD8DEE9;
+    private static final int SUB_BG = 0xCC1B202C;
+    private static final int BORDER_COL = 0xAA2E3648;
+    private static final int MUTED_HINT = 0xFF8892A6;
 
     private final Map<String, List<ModuleNode>> panels = new LinkedHashMap<>();
     private final Map<String, Integer> panelScroll = new LinkedHashMap<>();
     private int horizontalScroll = 0;
 
-    private ModuleNode expandedSettingsNode = null;
-    private int settingsBoxX = 0;
-    private int settingsBoxY = 0;
+    // Раскрытая функция и прогресс анимации [0..1]
+    private ModuleNode expandedNode = null;
+    private float expandAnim = 0.0f;
 
+    // Модальный цветовой круг (HSV + шкала яркости + HEX)
     private IntSupplier activeColorGetter = null;
     private IntConsumer activeColorSetter = null;
     private String activeColorTitle = "";
-    private float pickerHue = 0.55f;
-    private float pickerSat = 0.70f;
-    private float pickerVal = 0.95f;
+    private float pickerHue = 0.58f;
+    private float pickerSat = 0.55f;
+    private float pickerVal = 0.90f;
     private boolean draggingWheel = false;
     private boolean draggingBrightness = false;
 
-    private static final int WHEEL_R = 36;
+    private static final int WHEEL_R = 38;
 
     public ControlPanelScreen() {
         super(Component.literal("Vangix Tools"));
@@ -65,7 +68,7 @@ public class ControlPanelScreen extends Screen {
         List<SubSetting> espSub = List.of(
                 SubSetting.toggle("Entity Tag", () -> FeatureState.showEntityTag, v -> FeatureState.showEntityTag = v),
                 SubSetting.toggle("Entity Gear", () -> FeatureState.showEntityGear, v -> FeatureState.showEntityGear = v),
-                SubSetting.color("ESP/Line Color", FeatureState::getGuideColor, FeatureState::setGuideColor)
+                SubSetting.color("Line Color", FeatureState::getGuideColor, FeatureState::setGuideColor)
         );
 
         List<SubSetting> blockEspSub = List.of(
@@ -130,15 +133,15 @@ public class ControlPanelScreen extends Screen {
                 new ModuleNode("Guide Color",
                         () -> true,
                         v -> openColorWheel("Guide Color", FeatureState::getGuideColor, FeatureState::setGuideColor),
-                        List.of(SubSetting.color("Wheel", FeatureState::getGuideColor, FeatureState::setGuideColor))),
+                        List.of(SubSetting.color("Pick Color", FeatureState::getGuideColor, FeatureState::setGuideColor))),
                 new ModuleNode("HUD Color",
                         () -> true,
                         v -> openColorWheel("HUD Color", FeatureState::getHudColor, FeatureState::setHudColor),
-                        List.of(SubSetting.color("Wheel", FeatureState::getHudColor, FeatureState::setHudColor))),
+                        List.of(SubSetting.color("Pick Color", FeatureState::getHudColor, FeatureState::setHudColor))),
                 new ModuleNode("Accent Color",
                         () -> true,
                         v -> openColorWheel("Accent Color", () -> FeatureState.accentColor, c -> FeatureState.accentColor = c),
-                        List.of(SubSetting.color("Wheel", () -> FeatureState.accentColor, c -> FeatureState.accentColor = c))),
+                        List.of(SubSetting.color("Pick Color", () -> FeatureState.accentColor, c -> FeatureState.accentColor = c))),
                 new ModuleNode("Reset Scroll", () -> false, v -> {
                     horizontalScroll = 0;
                     panelScroll.replaceAll((k, val) -> 0);
@@ -172,12 +175,27 @@ public class ControlPanelScreen extends Screen {
         activeColorSetter.accept(0xFF000000 | rgb);
     }
 
+    private void stepExpandAnimation() {
+        float target = (expandedNode != null && !expandedNode.subSettings.isEmpty()) ? 1.0f : 0.0f;
+        float speed = 0.18f;
+        if (expandAnim < target) {
+            expandAnim = Math.min(target, expandAnim + speed);
+        } else if (expandAnim > target) {
+            expandAnim = Math.max(target, expandAnim - speed);
+        }
+    }
+
     private void drawText(GuiGraphicsExtractor graphics, String text, int x, int y, int color) {
         graphics.text(this.font, Component.literal(text), x, y, color);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        stepExpandAnimation();
+
+        int accent = (FeatureState.accentColor & 0x00FFFFFF) | 0xFF000000;
+        int headerAccent = blendRgb(HEADER_ACCENT, accent, 0.45f);
+
         int colIdx = 0;
         for (Map.Entry<String, List<ModuleNode>> entry : panels.entrySet()) {
             String title = entry.getKey();
@@ -187,26 +205,40 @@ public class ControlPanelScreen extends Screen {
             int py = START_Y;
 
             int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
-            int bodyH = visibleCount * ROW_H + 2;
             int maxScroll = Math.max(0, items.size() - MAX_VISIBLE_ROWS);
             int scroll = Math.max(0, Math.min(panelScroll.getOrDefault(title, 0), maxScroll));
             panelScroll.put(title, scroll);
 
-            graphics.fill(px, py, px + PANEL_W, py + HEADER_H, HEADER_GRAD_TOP);
-            graphics.fill(px, py + HEADER_H / 2, px + PANEL_W, py + HEADER_H, HEADER_GRAD_BOT);
-            drawText(graphics, title, px + 4, py + 2, 0xFF0B1020);
+            int extraH = 0;
+            for (int r = 0; r < visibleCount; r++) {
+                int idx = r + scroll;
+                if (idx >= items.size()) break;
+                ModuleNode node = items.get(idx);
+                if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.01f) {
+                    extraH += Math.round(node.subSettings.size() * SUB_ROW_H * expandAnim);
+                }
+            }
 
+            int bodyH = visibleCount * ROW_H + extraH + 2;
             int bodyTop = py + HEADER_H;
             int bodyBottom = bodyTop + bodyH;
-            graphics.fill(px, bodyTop, px + PANEL_W, bodyBottom, PANEL_BG);
-            drawBox(graphics, px, py, px + PANEL_W, bodyBottom, BORDER_COLOR);
 
+            // Шапка панели
+            graphics.fill(px, py, px + PANEL_W, py + HEADER_H, HEADER_BG);
+            graphics.fill(px, py + HEADER_H - 1, px + PANEL_W, py + HEADER_H, headerAccent);
+            drawText(graphics, title, px + 4, py + 2, 0xFFE6ECF5);
+
+            // Тело панели
+            graphics.fill(px, bodyTop, px + PANEL_W, bodyBottom, PANEL_BG);
+            drawBox(graphics, px, py, px + PANEL_W, bodyBottom, BORDER_COL);
+
+            int curY = bodyTop + 1;
             for (int r = 0; r < visibleCount; r++) {
                 int idx = r + scroll;
                 if (idx >= items.size()) break;
 
                 ModuleNode node = items.get(idx);
-                int ry = bodyTop + 1 + r * ROW_H;
+                int ry = curY;
                 boolean hovered = mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H;
                 boolean enabled = node.getter.getAsBoolean();
@@ -215,15 +247,50 @@ public class ControlPanelScreen extends Screen {
                     graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, ACTIVE_ROW_BG);
                 }
                 if (hovered) {
-                    graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, ROW_HOVER_BG);
+                    graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, ROW_HOVER);
                 }
 
                 String label = enabled ? "▸ " + node.name : node.name;
-                drawText(graphics, label, px + 3, ry + 2, enabled ? ACTIVE_TEXT : INACTIVE_TEXT);
+                drawText(graphics, label, px + 4, ry + 2, enabled ? ACTIVE_TEXT : INACTIVE_TEXT);
 
                 if (!node.subSettings.isEmpty()) {
-                    boolean open = expandedSettingsNode == node;
-                    drawText(graphics, open ? "-" : "+", px + PANEL_W - 8, ry + 2, ACCENT_PINK);
+                    boolean open = expandedNode == node;
+                    drawText(graphics, open ? "▾" : "▸", px + PANEL_W - 9, ry + 2, MUTED_HINT);
+                }
+
+                curY += ROW_H;
+
+                // Анимированное раскрытие доп. настроек прямо под функцией
+                if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.01f) {
+                    int fullSubH = node.subSettings.size() * SUB_ROW_H;
+                    int animSubH = Math.round(fullSubH * expandAnim);
+                    if (animSubH > 0) {
+                        graphics.fill(px + 2, curY, px + PANEL_W - 2, curY + animSubH, SUB_BG);
+                        int maxVisibleSubRows = animSubH / SUB_ROW_H;
+                        for (int s = 0; s < maxVisibleSubRows; s++) {
+                            SubSetting sub = node.subSettings.get(s);
+                            int sy = curY + s * SUB_ROW_H;
+                            boolean subHover = mouseX >= px + 2 && mouseX <= px + PANEL_W - 2
+                                    && mouseY >= sy && mouseY < sy + SUB_ROW_H;
+                            if (subHover) {
+                                graphics.fill(px + 2, sy, px + PANEL_W - 2, sy + SUB_ROW_H, ROW_HOVER);
+                            }
+
+                            if (sub.kind == SubKind.TOGGLE) {
+                                boolean on = sub.boolGetter.getAsBoolean();
+                                drawText(graphics, (on ? "✓ " : "· ") + sub.label, px + 7, sy + 2,
+                                        on ? ACTIVE_TEXT : MUTED_HINT);
+                            } else if (sub.kind == SubKind.COLOR) {
+                                int c = sub.colorGetter.getAsInt() | 0xFF000000;
+                                drawText(graphics, "· " + sub.label, px + 7, sy + 2, INACTIVE_TEXT);
+                                graphics.fill(px + PANEL_W - 13, sy + 2, px + PANEL_W - 6, sy + 8, c);
+                                drawBox(graphics, px + PANEL_W - 14, sy + 1, px + PANEL_W - 5, sy + 9, BORDER_COL);
+                            } else {
+                                drawText(graphics, "· " + sub.label, px + 7, sy + 2, INACTIVE_TEXT);
+                            }
+                        }
+                        curY += animSubH;
+                    }
                 }
             }
 
@@ -232,14 +299,10 @@ public class ControlPanelScreen extends Screen {
                 int trackH = Math.max(6, bodyH - 4);
                 int thumbH = Math.max(6, trackH * visibleCount / items.size());
                 int thumbY = trackTop + (trackH - thumbH) * scroll / maxScroll;
-                graphics.fill(px + PANEL_W - 2, thumbY, px + PANEL_W - 1, thumbY + thumbH, ACCENT_BLUE);
+                graphics.fill(px + PANEL_W - 2, thumbY, px + PANEL_W - 1, thumbY + thumbH, headerAccent);
             }
 
             colIdx++;
-        }
-
-        if (expandedSettingsNode != null) {
-            renderExpandedSettings(graphics, mouseX, mouseY);
         }
 
         if (activeColorSetter != null) {
@@ -247,60 +310,23 @@ public class ControlPanelScreen extends Screen {
         }
     }
 
-    private void renderExpandedSettings(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
-        int boxW = 114;
-        int rowCount = expandedSettingsNode.subSettings.size();
-        int boxH = 14 + rowCount * ROW_H + 4;
-
-        settingsBoxX = Math.min(this.width - boxW - 6, START_X + 12);
-        settingsBoxY = Math.min(this.height - boxH - 6, START_Y + MAX_VISIBLE_ROWS * ROW_H + HEADER_H + 14);
-
-        graphics.fill(settingsBoxX, settingsBoxY, settingsBoxX + boxW, settingsBoxY + boxH, 0xE60F172A);
-        graphics.fill(settingsBoxX, settingsBoxY, settingsBoxX + boxW, settingsBoxY + 13, 0xE638BDF8);
-        drawText(graphics, expandedSettingsNode.name + " cfg", settingsBoxX + 4, settingsBoxY + 2, 0xFF090D16);
-        drawText(graphics, "✕", settingsBoxX + boxW - 9, settingsBoxY + 2, 0xFF090D16);
-        drawBox(graphics, settingsBoxX, settingsBoxY, settingsBoxX + boxW, settingsBoxY + boxH, ACCENT_PINK);
-
-        for (int i = 0; i < rowCount; i++) {
-            SubSetting sub = expandedSettingsNode.subSettings.get(i);
-            int sy = settingsBoxY + 15 + i * ROW_H;
-            boolean hovered = mouseX >= settingsBoxX + 2 && mouseX <= settingsBoxX + boxW - 2
-                    && mouseY >= sy && mouseY < sy + ROW_H;
-
-            if (hovered) {
-                graphics.fill(settingsBoxX + 2, sy, settingsBoxX + boxW - 2, sy + ROW_H, ROW_HOVER_BG);
-            }
-
-            if (sub.kind == SubKind.TOGGLE) {
-                boolean on = sub.boolGetter.getAsBoolean();
-                drawText(graphics, (on ? "✓ " : "○ ") + sub.label, settingsBoxX + 4, sy + 2, on ? ACTIVE_TEXT : INACTIVE_TEXT);
-            } else if (sub.kind == SubKind.COLOR) {
-                int c = sub.colorGetter.getAsInt() | 0xFF000000;
-                drawText(graphics, sub.label, settingsBoxX + 4, sy + 2, ACCENT_BLUE);
-                graphics.fill(settingsBoxX + boxW - 14, sy + 2, settingsBoxX + boxW - 6, sy + 8, c);
-                drawBox(graphics, settingsBoxX + boxW - 15, sy + 1, settingsBoxX + boxW - 5, sy + 9, ACCENT_PINK);
-            } else {
-                drawText(graphics, sub.label, settingsBoxX + 4, sy + 2, ACCENT_PINK);
-            }
-        }
-    }
-
     private void renderColorWheelModal(GuiGraphicsExtractor graphics) {
-        int boxW = 128;
-        int boxH = 124;
+        int boxW = 132;
+        int boxH = 128;
         int boxX = (this.width - boxW) / 2;
         int boxY = (this.height - boxH) / 2;
 
-        graphics.fill(boxX, boxY, boxX + boxW, boxY + boxH, 0xF2111827);
-        graphics.fill(boxX, boxY, boxX + boxW, boxY + 13, 0xE638BDF8);
-        drawText(graphics, activeColorTitle, boxX + 4, boxY + 2, 0xFF090D16);
-        drawText(graphics, "✕", boxX + boxW - 9, boxY + 2, 0xFF090D16);
-        drawBox(graphics, boxX, boxY, boxX + boxW, boxY + boxH, ACCENT_PINK);
+        graphics.fill(boxX, boxY, boxX + boxW, boxY + boxH, 0xF5141820);
+        graphics.fill(boxX, boxY, boxX + boxW, boxY + 13, HEADER_BG);
+        graphics.fill(boxX, boxY + 12, boxX + boxW, boxY + 13, HEADER_ACCENT);
+        drawText(graphics, activeColorTitle, boxX + 5, boxY + 2, 0xFFE6ECF5);
+        drawText(graphics, "✕", boxX + boxW - 10, boxY + 2, INACTIVE_TEXT);
+        drawBox(graphics, boxX, boxY, boxX + boxW, boxY + boxH, BORDER_COL);
 
-        int cx = boxX + 48;
-        int cy = boxY + 56;
+        int cx = boxX + 50;
+        int cy = boxY + 58;
 
-        drawFilledCircle(graphics, cx, cy, WHEEL_R + 2, 0xFFE2E8F0);
+        drawFilledCircle(graphics, cx, cy, WHEEL_R + 2, 0xFFCBD5E1);
 
         for (int dy = -WHEEL_R; dy <= WHEEL_R; dy++) {
             int maxDx = (int) Math.sqrt(WHEEL_R * WHEEL_R - dy * dy);
@@ -318,42 +344,43 @@ public class ControlPanelScreen extends Screen {
         int selY = cy + (int) Math.round(Math.sin(selAngle) * pickerSat * WHEEL_R);
         drawCircleOutline(graphics, selX, selY, 3, 0xFFFFFFFF);
 
-        int barX = boxX + 98;
-        int barY = boxY + 20;
+        int barX = boxX + 102;
+        int barY = boxY + 21;
         int barW = 9;
-        int barH = 72;
+        int barH = 74;
         for (int y = 0; y < barH; y++) {
             float v = 1.0f - (y / (float) (barH - 1));
             graphics.fill(barX, barY + y, barX + barW, barY + y + 1, Color.HSBtoRGB(pickerHue, pickerSat, v));
         }
-        drawBox(graphics, barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, ACCENT_BLUE);
+        drawBox(graphics, barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, BORDER_COL);
 
         int arrowY = barY + Math.round((1.0f - pickerVal) * (barH - 1));
-        graphics.fill(barX - 4, arrowY - 1, barX - 1, arrowY + 2, ACCENT_PINK);
+        graphics.fill(barX - 4, arrowY - 1, barX - 1, arrowY + 2, 0xFF8AB4F8);
 
         int hexX = boxX + 10;
-        int hexY = boxY + 100;
-        int hexW = 84;
+        int hexY = boxY + 103;
+        int hexW = 86;
         int hexH = 16;
-        graphics.fill(hexX, hexY, hexX + hexW, hexY + hexH, 0xFF1E293B);
+        graphics.fill(hexX, hexY, hexX + hexW, hexY + hexH, 0xFF1D2330);
+        drawBox(graphics, hexX, hexY, hexX + hexW, hexY + hexH, BORDER_COL);
 
         int rgb = Color.HSBtoRGB(pickerHue, pickerSat, pickerVal) & 0x00FFFFFF;
         String hex = String.format("#%06x", rgb);
-        drawText(graphics, hex, hexX + (hexW - this.font.width(hex)) / 2, hexY + 4, 0xFFF8FAFC);
+        drawText(graphics, hex, hexX + (hexW - this.font.width(hex)) / 2, hexY + 4, 0xFFE6ECF5);
 
         graphics.fill(barX - 1, hexY, barX + barW + 1, hexY + hexH, 0xFF000000 | rgb);
-        drawBox(graphics, barX - 1, hexY, barX + barW + 1, hexY + hexH, ACCENT_PINK);
+        drawBox(graphics, barX - 1, hexY, barX + barW + 1, hexY + hexH, BORDER_COL);
     }
 
     private void updatePickerFromMouse(double mouseX, double mouseY) {
-        int boxW = 128;
-        int boxH = 124;
+        int boxW = 132;
+        int boxH = 128;
         int boxX = (this.width - boxW) / 2;
         int boxY = (this.height - boxH) / 2;
-        int cx = boxX + 48;
-        int cy = boxY + 56;
-        int barY = boxY + 20;
-        int barH = 72;
+        int cx = boxX + 50;
+        int cy = boxY + 58;
+        int barY = boxY + 21;
+        int barH = 74;
 
         if (draggingWheel) {
             double dx = mouseX - cx;
@@ -386,7 +413,7 @@ public class ControlPanelScreen extends Screen {
             int px = START_X + colIdx * (PANEL_W + PANEL_GAP) - horizontalScroll;
             int py = START_Y;
             int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
-            int bodyBottom = py + HEADER_H + visibleCount * ROW_H + 2;
+            int bodyBottom = py + HEADER_H + visibleCount * ROW_H + 36;
 
             boolean overPanel = mouseX >= px && mouseX <= px + PANEL_W && mouseY >= py && mouseY <= bodyBottom;
             if (overPanel && step != 0) {
@@ -448,14 +475,15 @@ public class ControlPanelScreen extends Screen {
         double mouseY = extractY(event);
         int button = extractButton(event);
 
+        // Клик в модальном цветовом круге
         if (activeColorSetter != null) {
-            int boxW = 128;
-            int boxH = 124;
+            int boxW = 132;
+            int boxH = 128;
             int boxX = (this.width - boxW) / 2;
             int boxY = (this.height - boxH) / 2;
 
             boolean inside = mouseX >= boxX && mouseX <= boxX + boxW && mouseY >= boxY && mouseY <= boxY + boxH;
-            boolean closeHit = mouseX >= boxX + boxW - 14 && mouseX <= boxX + boxW && mouseY >= boxY && mouseY <= boxY + 13;
+            boolean closeHit = mouseX >= boxX + boxW - 15 && mouseX <= boxX + boxW && mouseY >= boxY && mouseY <= boxY + 13;
 
             if (!inside || closeHit) {
                 activeColorSetter = null;
@@ -465,17 +493,17 @@ public class ControlPanelScreen extends Screen {
                 return true;
             }
 
-            int cx = boxX + 48;
-            int cy = boxY + 56;
+            int cx = boxX + 50;
+            int cy = boxY + 58;
             if (Math.hypot(mouseX - cx, mouseY - cy) <= WHEEL_R + 3) {
                 draggingWheel = true;
                 updatePickerFromMouse(mouseX, mouseY);
                 return true;
             }
 
-            int barX = boxX + 98;
-            int barY = boxY + 20;
-            if (mouseX >= barX - 5 && mouseX <= barX + 12 && mouseY >= barY - 2 && mouseY <= barY + 74) {
+            int barX = boxX + 102;
+            int barY = boxY + 21;
+            if (mouseX >= barX - 5 && mouseX <= barX + 12 && mouseY >= barY - 2 && mouseY <= barY + 76) {
                 draggingBrightness = true;
                 updatePickerFromMouse(mouseX, mouseY);
                 return true;
@@ -484,40 +512,7 @@ public class ControlPanelScreen extends Screen {
             return true;
         }
 
-        if (expandedSettingsNode != null) {
-            int boxW = 114;
-            int rowCount = expandedSettingsNode.subSettings.size();
-            int boxH = 14 + rowCount * ROW_H + 4;
-
-            boolean inside = mouseX >= settingsBoxX && mouseX <= settingsBoxX + boxW
-                    && mouseY >= settingsBoxY && mouseY <= settingsBoxY + boxH;
-            boolean closeHit = mouseX >= settingsBoxX + boxW - 14 && mouseX <= settingsBoxX + boxW
-                    && mouseY >= settingsBoxY && mouseY <= settingsBoxY + 13;
-
-            if (closeHit) {
-                expandedSettingsNode = null;
-                return true;
-            }
-
-            if (inside) {
-                for (int i = 0; i < rowCount; i++) {
-                    SubSetting sub = expandedSettingsNode.subSettings.get(i);
-                    int sy = settingsBoxY + 15 + i * ROW_H;
-                    if (mouseY >= sy && mouseY < sy + ROW_H) {
-                        if (sub.kind == SubKind.TOGGLE) {
-                            sub.boolSetter.accept(!sub.boolGetter.getAsBoolean());
-                        } else if (sub.kind == SubKind.COLOR) {
-                            openColorWheel(sub.label, sub.colorGetter, sub.colorSetter);
-                        } else if (sub.action != null) {
-                            sub.action.run();
-                        }
-                        return true;
-                    }
-                }
-                return true;
-            }
-        }
-
+        // Клик по колонкам и раскрытым подпунктам под функцией
         int colIdx = 0;
         for (Map.Entry<String, List<ModuleNode>> entry : panels.entrySet()) {
             String title = entry.getKey();
@@ -526,29 +521,60 @@ public class ControlPanelScreen extends Screen {
             int px = START_X + colIdx * (PANEL_W + PANEL_GAP) - horizontalScroll;
             int py = START_Y;
             int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
-            int bodyTop = py + HEADER_H;
             int scroll = panelScroll.getOrDefault(title, 0);
 
+            int curY = py + HEADER_H + 1;
             for (int r = 0; r < visibleCount; r++) {
                 int idx = r + scroll;
                 if (idx >= items.size()) break;
 
                 ModuleNode node = items.get(idx);
-                int ry = bodyTop + 1 + r * ROW_H;
+                int ry = curY;
+
                 if (mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H) {
 
-                    boolean hitPlus = !node.subSettings.isEmpty()
-                            && mouseX >= px + PANEL_W - 12 && mouseX <= px + PANEL_W - 2;
-                    if (button == 1 || (button == 0 && hitPlus)) {
-                        expandedSettingsNode = (expandedSettingsNode == node) ? null : node;
+                    // ПКМ открывает/закрывает доп. настройки (если они есть)
+                    if (button == 1) {
+                        if (!node.subSettings.isEmpty()) {
+                            expandedNode = (expandedNode == node) ? null : node;
+                            return true;
+                        }
                         return true;
                     }
 
+                    // ЛКМ по самой строке функции включает/выключает функцию
                     if (button == 0) {
                         node.setter.accept(!node.getter.getAsBoolean());
                         return true;
                     }
+                }
+
+                curY += ROW_H;
+
+                // Проверка кликов по раскрытым подпунктам под функцией
+                if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.25f) {
+                    int fullSubH = node.subSettings.size() * SUB_ROW_H;
+                    int animSubH = Math.round(fullSubH * expandAnim);
+                    int maxVisibleSubRows = animSubH / SUB_ROW_H;
+
+                    for (int s = 0; s < maxVisibleSubRows; s++) {
+                        SubSetting sub = node.subSettings.get(s);
+                        int sy = curY + s * SUB_ROW_H;
+                        if (mouseX >= px + 2 && mouseX <= px + PANEL_W - 2
+                                && mouseY >= sy && mouseY < sy + SUB_ROW_H) {
+                            if (sub.kind == SubKind.TOGGLE) {
+                                sub.boolSetter.accept(!sub.boolGetter.getAsBoolean());
+                            } else if (sub.kind == SubKind.COLOR) {
+                                openColorWheel(sub.label, sub.colorGetter, sub.colorSetter);
+                            } else if (sub.action != null) {
+                                sub.action.run();
+                            }
+                            return true;
+                        }
+                    }
+
+                    curY += animSubH;
                 }
             }
             colIdx++;
@@ -578,6 +604,23 @@ public class ControlPanelScreen extends Screen {
         return false;
     }
 
+    private int blendRgb(int baseArgb, int tintArgb, float ratio) {
+        float t = Math.max(0.0f, Math.min(1.0f, ratio));
+        int a = (baseArgb >> 24) & 0xFF;
+        int r1 = (baseArgb >> 16) & 0xFF;
+        int g1 = (baseArgb >> 8) & 0xFF;
+        int b1 = baseArgb & 0xFF;
+
+        int r2 = (tintArgb >> 16) & 0xFF;
+        int g2 = (tintArgb >> 8) & 0xFF;
+        int b2 = tintArgb & 0xFF;
+
+        int r = Math.round(r1 + (r2 - r1) * t);
+        int g = Math.round(g1 + (g2 - g1) * t);
+        int b = Math.round(b1 + (b2 - b1) * t);
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
     private void drawBox(GuiGraphicsExtractor graphics, int x1, int y1, int x2, int y2, int color) {
         graphics.fill(x1, y1, x2, y1 + 1, color);
         graphics.fill(x1, y2 - 1, x2, y2, color);
@@ -585,54 +628,4 @@ public class ControlPanelScreen extends Screen {
         graphics.fill(x2 - 1, y1, x2, y2, color);
     }
 
-    private void drawFilledCircle(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
-        for (int dy = -r; dy <= r; dy++) {
-            int dx = (int) Math.sqrt(r * r - dy * dy);
-            graphics.fill(cx - dx, cy + dy, cx + dx + 1, cy + dy + 1, color);
-        }
-    }
-
-    private void drawCircleOutline(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
-        for (int deg = 0; deg < 360; deg += 12) {
-            double rad = Math.toRadians(deg);
-            int x = cx + (int) Math.round(Math.cos(rad) * r);
-            int y = cy + (int) Math.round(Math.sin(rad) * r);
-            graphics.fill(x, y, x + 1, y + 1, color);
-        }
-    }
-
-    private enum SubKind {
-        TOGGLE,
-        COLOR,
-        ACTION
-    }
-
-    private record SubSetting(
-            String label,
-            SubKind kind,
-            BooleanSupplier boolGetter,
-            Consumer<Boolean> boolSetter,
-            IntSupplier colorGetter,
-            IntConsumer colorSetter,
-            Runnable action
-    ) {
-        static SubSetting toggle(String label, BooleanSupplier getter, Consumer<Boolean> setter) {
-            return new SubSetting(label, SubKind.TOGGLE, getter, setter, null, null, null);
-        }
-
-        static SubSetting color(String label, IntSupplier getter, IntConsumer setter) {
-            return new SubSetting(label, SubKind.COLOR, null, null, getter, setter, null);
-        }
-
-        static SubSetting action(String label, Runnable action) {
-            return new SubSetting(label, SubKind.ACTION, null, null, null, null, action);
-        }
-    }
-
-    private record ModuleNode(
-            String name,
-            BooleanSupplier getter,
-            Consumer<Boolean> setter,
-            List<SubSetting> subSettings
-    ) {}
-}
+    private void drawFilledCircle(GuiGraphicsExtractor graphics, int cx, int
