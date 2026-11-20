@@ -7,6 +7,7 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.awt.Color;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -28,13 +29,18 @@ public class ControlPanelScreen extends Screen {
     private static final int START_X = 8;
     private static final int START_Y = 8;
 
-    // Ширина зоны стрелочки справа в строке модуля
+    // Зоны клика в строке модуля:
+    // - цветной квадратик (если есть цвет у модуля)
+    // - стрелочка справа (если есть доп. настройки)
+    // - всё остальное — включение/выключение функции
+    private static final int SWATCH_HIT_W = 11;
     private static final int ARROW_HIT_W = 14;
 
     private static final int PANEL_BG = 0xD8141820;
     private static final int HEADER_BG = 0xE6222938;
     private static final int HEADER_ACCENT = 0xFF5B7CFA;
     private static final int ROW_HOVER = 0x443B4761;
+    private static final int ARROW_HOVER = 0x555B7CFA;
     private static final int ACTIVE_ROW_BG = 0x335B7CFA;
     private static final int ACTIVE_TEXT = 0xFF8AB4F8;
     private static final int INACTIVE_TEXT = 0xFFD8DEE9;
@@ -55,6 +61,7 @@ public class ControlPanelScreen extends Screen {
     private ModuleNode expandedNode = null;
     private float expandAnim = 0.0f;
 
+    // Модальный цветовой круг (HSV + шкала яркости + HEX)
     private IntSupplier activeColorGetter = null;
     private IntConsumer activeColorSetter = null;
     private String activeColorTitle = "";
@@ -114,9 +121,11 @@ public class ControlPanelScreen extends Screen {
         addPanel("Visuals", List.of(
                 new ModuleNode("Player ESP", () -> FeatureState.entitySight, v -> FeatureState.entitySight = v, espSub),
                 new ModuleNode("Block ESP", () -> FeatureState.containerSight, v -> FeatureState.containerSight = v, blockEspSub),
-                new ModuleNode("Tracers", () -> FeatureState.lineGuides, v -> FeatureState.lineGuides = v, tracersSub),
+                new ModuleNode("Tracers", () -> FeatureState.lineGuides, v -> FeatureState.lineGuides = v, tracersSub,
+                        FeatureState::getGuideColor, FeatureState::setGuideColor),
                 new ModuleNode("Fullbright", () -> FeatureState.fullbrightFlag, v -> FeatureState.fullbrightFlag = v, List.of()),
-                new ModuleNode("Status HUD", () -> FeatureState.statusHud, v -> FeatureState.statusHud = v, hudSub),
+                new ModuleNode("Status HUD", () -> FeatureState.statusHud, v -> FeatureState.statusHud = v, hudSub,
+                        FeatureState::getHudColor, FeatureState::setHudColor),
                 new ModuleNode("Chunk Finder", () -> FeatureState.areaScanner, v -> FeatureState.areaScanner = v, List.of())
         ));
 
@@ -141,15 +150,18 @@ public class ControlPanelScreen extends Screen {
                 new ModuleNode("Guide Color",
                         () -> true,
                         v -> openColorWheel("Guide Color", FeatureState::getGuideColor, FeatureState::setGuideColor),
-                        List.of(SubSetting.color("Pick Color", FeatureState::getGuideColor, FeatureState::setGuideColor))),
+                        List.of(SubSetting.color("Pick Color", FeatureState::getGuideColor, FeatureState::setGuideColor)),
+                        FeatureState::getGuideColor, FeatureState::setGuideColor),
                 new ModuleNode("HUD Color",
                         () -> true,
                         v -> openColorWheel("HUD Color", FeatureState::getHudColor, FeatureState::setHudColor),
-                        List.of(SubSetting.color("Pick Color", FeatureState::getHudColor, FeatureState::setHudColor))),
+                        List.of(SubSetting.color("Pick Color", FeatureState::getHudColor, FeatureState::setHudColor)),
+                        FeatureState::getHudColor, FeatureState::setHudColor),
                 new ModuleNode("Accent Color",
                         () -> true,
                         v -> openColorWheel("Accent Color", () -> FeatureState.accentColor, c -> FeatureState.accentColor = c),
-                        List.of(SubSetting.color("Pick Color", () -> FeatureState.accentColor, c -> FeatureState.accentColor = c))),
+                        List.of(SubSetting.color("Pick Color", () -> FeatureState.accentColor, c -> FeatureState.accentColor = c)),
+                        () -> FeatureState.accentColor, c -> FeatureState.accentColor = c),
                 new ModuleNode("Reset Scroll", () -> false, v -> {
                     horizontalScroll = 0;
                     panelScroll.replaceAll((k, val) -> 0);
@@ -160,6 +172,14 @@ public class ControlPanelScreen extends Screen {
     private void addPanel(String title, List<ModuleNode> nodes) {
         panels.put(title, new ArrayList<>(nodes));
         panelScroll.putIfAbsent(title, 0);
+    }
+
+    private int getArrowRightEdge(ModuleNode node, int px) {
+        return node.hasColor() ? (px + PANEL_W - SWATCH_HIT_W) : (px + PANEL_W - 1);
+    }
+
+    private int getArrowLeftEdge(ModuleNode node, int px) {
+        return getArrowRightEdge(node, px) - ARROW_HIT_W;
     }
 
     private void openColorWheel(String title, IntSupplier getter, IntConsumer setter) {
@@ -230,24 +250,39 @@ public class ControlPanelScreen extends Screen {
         graphics.text(this.font, Component.literal(text), x, y, color);
     }
 
-    private void drawArrowIcon(GuiGraphicsExtractor graphics, int px, int ry, boolean open, int color) {
-        // Чуть более крупная и читаемая стрелочка справа в строке
-        int arrowX = px + PANEL_W - 10;
+    private void drawColorSwatch(GuiGraphicsExtractor graphics, int px, int ry, int argb, float alphaScale) {
+        int swX = px + PANEL_W - 8;
+        int swY = ry + 3;
+        int col = (argb & 0x00FFFFFF) | 0xFF000000;
+        graphics.fill(swX, swY, swX + 5, swY + 5, scaleAlpha(col, alphaScale));
+        drawBox(graphics, swX - 1, swY - 1, swX + 6, swY + 6, scaleAlpha(0xCCFFFFFF, alphaScale));
+    }
+
+    private void drawArrowIcon(GuiGraphicsExtractor graphics, ModuleNode node, int px, int ry, boolean open, boolean hovered, int color, float alphaScale) {
+        int leftEdge = getArrowLeftEdge(node, px);
+        int rightEdge = getArrowRightEdge(node, px);
+        if (hovered) {
+            graphics.fill(leftEdge, ry + 1, rightEdge, ry + ROW_H - 1, scaleAlpha(ARROW_HOVER, alphaScale));
+        }
+
+        int arrowX = rightEdge - 5;
         int midY = ry + ROW_H / 2;
         if (open) {
-            // Стрелочка вниз (⌄)
-            graphics.fill(arrowX - 2, midY - 1, arrowX - 1, midY, color);
-            graphics.fill(arrowX - 1, midY, arrowX, midY + 1, color);
-            graphics.fill(arrowX, midY + 1, arrowX + 1, midY + 2, color);
-            graphics.fill(arrowX + 1, midY, arrowX + 2, midY + 1, color);
-            graphics.fill(arrowX + 2, midY - 1, arrowX + 3, midY, color);
+            graphics.fill(arrowX - 3, midY - 1, arrowX - 2, midY, color);
+            graphics.fill(arrowX - 2, midY, arrowX - 1, midY + 1, color);
+            graphics.fill(arrowX - 1, midY + 1, arrowX, midY + 2, color);
+            graphics.fill(arrowX, midY + 2, arrowX + 1, midY + 3, color);
+            graphics.fill(arrowX + 1, midY + 1, arrowX + 2, midY + 2, color);
+            graphics.fill(arrowX + 2, midY, arrowX + 3, midY + 1, color);
+            graphics.fill(arrowX + 3, midY - 1, arrowX + 4, midY, color);
         } else {
-            // Стрелочка вправо (›)
-            graphics.fill(arrowX - 1, midY - 2, arrowX, midY - 1, color);
-            graphics.fill(arrowX, midY - 1, arrowX + 1, midY, color);
-            graphics.fill(arrowX + 1, midY, arrowX + 2, midY + 1, color);
-            graphics.fill(arrowX, midY + 1, arrowX + 1, midY + 2, color);
-            graphics.fill(arrowX - 1, midY + 2, arrowX, midY + 3, color);
+            graphics.fill(arrowX - 1, midY - 3, arrowX, midY - 2, color);
+            graphics.fill(arrowX, midY - 2, arrowX + 1, midY - 1, color);
+            graphics.fill(arrowX + 1, midY - 1, arrowX + 2, midY, color);
+            graphics.fill(arrowX + 2, midY, arrowX + 3, midY + 1, color);
+            graphics.fill(arrowX + 1, midY + 1, arrowX + 2, midY + 2, color);
+            graphics.fill(arrowX, midY + 2, arrowX + 1, midY + 3, color);
+            graphics.fill(arrowX - 1, midY + 3, arrowX, midY + 4, color);
         }
     }
 
@@ -334,7 +369,15 @@ public class ControlPanelScreen extends Screen {
 
                 if (!node.subSettings.isEmpty()) {
                     boolean open = expandedNode == node;
-                    drawArrowIcon(graphics, px, ry, open, scaleAlpha(open ? ACTIVE_TEXT : ARROW_COLOR, easedScreen));
+                    boolean arrowHover = hovered
+                            && mouseX >= getArrowLeftEdge(node, px)
+                            && mouseX < getArrowRightEdge(node, px);
+                    drawArrowIcon(graphics, node, px, ry, open, arrowHover,
+                            scaleAlpha(open ? ACTIVE_TEXT : ARROW_COLOR, easedScreen), easedScreen);
+                }
+
+                if (node.hasColor()) {
+                    drawColorSwatch(graphics, px, ry, node.colorGetter.getAsInt(), easedScreen);
                 }
 
                 curY += ROW_H;
@@ -527,12 +570,26 @@ public class ControlPanelScreen extends Screen {
     }
 
     private int extractButton(MouseButtonEvent event) {
-        Object v = invokeNoArg(event, "button", "getButton", "buttonCode");
+        Object v = invokeNoArg(event, "button", "getButton", "buttonCode", "input", "getInput");
         if (v instanceof Number n) return n.intValue();
         Object info = invokeNoArg(event, "buttonInfo", "getButtonInfo");
         if (info != null) {
             Object b = invokeNoArg(info, "button", "getButton", "code");
             if (b instanceof Number n) return n.intValue();
+        }
+        if (event != null) {
+            for (Field f : event.getClass().getDeclaredFields()) {
+                if (f.getType() == int.class) {
+                    try {
+                        f.setAccessible(true);
+                        String fname = f.getName().toLowerCase();
+                        if (fname.contains("button") || fname.contains("key") || fname.contains("code")) {
+                            return f.getInt(event);
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
         }
         return 0;
     }
@@ -611,23 +668,24 @@ public class ControlPanelScreen extends Screen {
                 if (mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H) {
 
-                    boolean hitArrow = !node.subSettings.isEmpty()
-                            && mouseX >= px + PANEL_W - ARROW_HIT_W
-                            && mouseX <= px + PANEL_W - 1;
-
-                    // Нажатие по стрелочке (или ПКМ) открывает/закрывает доп. настройки
-                    if (hitArrow || button == 1) {
-                        if (!node.subSettings.isEmpty()) {
-                            expandedNode = (expandedNode == node) ? null : node;
-                        }
+                    // Клик по цветному квадратику справа открывает колор-пикер
+                    if (node.hasColor() && mouseX >= px + PANEL_W - SWATCH_HIT_W) {
+                        openColorWheel(node.name + " Color", node.colorGetter, node.colorSetter);
                         return true;
                     }
 
-                    // Нажатие по тексту / остальной части строки включает/выключает функцию
-                    if (button == 0) {
-                        node.setter.accept(!node.getter.getAsBoolean());
+                    // Клик по стрелочке справа (или ПКМ, если button == 1) раскрывает/скрывает доп. настройки
+                    boolean hitArrowArea = !node.subSettings.isEmpty()
+                            && mouseX >= getArrowLeftEdge(node, px)
+                            && mouseX < getArrowRightEdge(node, px);
+                    if (hitArrowArea || (button == 1 && !node.subSettings.isEmpty())) {
+                        expandedNode = (expandedNode == node) ? null : node;
                         return true;
                     }
+
+                    // Клик по тексту / основной части строки включает/выключает функцию
+                    node.setter.accept(!node.getter.getAsBoolean());
+                    return true;
                 }
 
                 curY += ROW_H;
@@ -781,6 +839,16 @@ public class ControlPanelScreen extends Screen {
             String name,
             BooleanSupplier getter,
             Consumer<Boolean> setter,
-            List<SubSetting> subSettings
-    ) {}
+            List<SubSetting> subSettings,
+            IntSupplier colorGetter,
+            IntConsumer colorSetter
+    ) {
+        ModuleNode(String name, BooleanSupplier getter, Consumer<Boolean> setter, List<SubSetting> subSettings) {
+            this(name, getter, setter, subSettings, null, null);
+        }
+
+        boolean hasColor() {
+            return colorGetter != null && colorSetter != null;
+        }
+    }
 }
