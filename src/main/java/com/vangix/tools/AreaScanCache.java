@@ -74,7 +74,7 @@ public class AreaScanCache {
             for (int dz = -scanRadiusChunks; dz <= scanRadiusChunks; dz++) {
                 int cx = centerX + dx;
                 int cz = centerZ + dz;
-                long key = ChunkPos.asLong(cx, cz);
+                long key = ChunkPos.pack(cx, cz);
                 keepKeys.add(key);
 
                 if (!mc.level.hasChunk(cx, cz)) continue;
@@ -112,7 +112,7 @@ public class AreaScanCache {
             String msg = "[ChunkFinder] Chunk (" + cx + ", " + cz + ") ~X:" + bx + " Z:" + bz
                     + " | score=" + res.score + " | " + res.summary;
             System.out.println(msg);
-            client.player.displayClientMessage(Component.literal(msg), false);
+            client.player.sendSystemMessage(Component.literal(msg));
         }
     }
 
@@ -140,8 +140,6 @@ public class AreaScanCache {
 
         int minWorldY = chunk.getMinY();
         LevelChunkSection[] sections = chunk.getSections();
-        int baseX = cx * 16;
-        int baseZ = cz * 16;
 
         for (int sIdx = 0; sIdx < sections.length; sIdx++) {
             LevelChunkSection section = sections[sIdx];
