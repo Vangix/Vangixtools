@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "vangixs_tools",
+  "version": "${version}",
+  "name": "Vangix's Tools",
+  "description": "Map inspection, overlay, and utility tools for Minecraft 26.3.",
+  "authors": [
+    "Vangix"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.vangix.tools.VangixClientEntry"
+    ]
+  },
+  "mixins": [],
+  "depends": {
+    "fabricloader": ">=0.20.10",
+    "minecraft": ">=26.3",
+    "java": ">=21",
+    "fabric-api": ">=0.166.2+26.3"
+  }
+}
