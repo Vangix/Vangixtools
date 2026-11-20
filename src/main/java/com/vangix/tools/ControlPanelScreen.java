@@ -4,6 +4,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 
 import java.awt.Color;
 import java.lang.reflect.Method;
@@ -27,7 +28,6 @@ public class ControlPanelScreen extends Screen {
     private static final int START_X = 8;
     private static final int START_Y = 8;
 
-    // Спокойная тёмно-графитовая палитра без кислотного неона
     private static final int PANEL_BG = 0xD8141820;
     private static final int HEADER_BG = 0xE6222938;
     private static final int HEADER_ACCENT = 0xFF5B7CFA;
@@ -41,16 +41,22 @@ public class ControlPanelScreen extends Screen {
 
     private final Map<String, List<ModuleNode>> panels = new LinkedHashMap<>();
     private final Map<String, Integer> panelScroll = new LinkedHashMap<>();
+    private final Map<String, Float> hoverProgressMap = new LinkedHashMap<>();
     private int horizontalScroll = 0;
 
-    // Раскрытая функция и прогресс анимации [0..1]
+    // Анимация открытия/закрытия экрана и раскрытия подпунктов
+    private long lastFrameNs = System.nanoTime();
+    private float screenAnim = 0.0f;
+    private boolean closingAnimated = false;
+
     private ModuleNode expandedNode = null;
     private float expandAnim = 0.0f;
 
-    // Модальный цветовой круг (HSV + шкала яркости + HEX)
+    // Модальный цветовой круг + анимация появления
     private IntSupplier activeColorGetter = null;
     private IntConsumer activeColorSetter = null;
     private String activeColorTitle = "";
+    private float pickerAnim = 0.0f;
     private float pickerHue = 0.58f;
     private float pickerSat = 0.55f;
     private float pickerVal = 0.90f;
@@ -158,6 +164,7 @@ public class ControlPanelScreen extends Screen {
         this.activeColorTitle = title;
         this.activeColorGetter = getter;
         this.activeColorSetter = setter;
+        this.pickerAnim = 0.0f;
 
         int argb = getter.getAsInt();
         int r = (argb >> 16) & 0xFF;
@@ -169,20 +176,52 @@ public class ControlPanelScreen extends Screen {
         this.pickerVal = hsb[2];
     }
 
+    private void closeColorWheel() {
+        this.activeColorSetter = null;
+        this.activeColorGetter = null;
+        this.draggingWheel = false;
+        this.draggingBrightness = false;
+        this.pickerAnim = 0.0f;
+    }
+
     private void applyWheelColor() {
         if (activeColorSetter == null) return;
         int rgb = Color.HSBtoRGB(pickerHue, pickerSat, pickerVal) & 0x00FFFFFF;
         activeColorSetter.accept(0xFF000000 | rgb);
     }
 
-    private void stepExpandAnimation() {
-        float target = (expandedNode != null && !expandedNode.subSettings.isEmpty()) ? 1.0f : 0.0f;
-        float speed = 0.18f;
-        if (expandAnim < target) {
-            expandAnim = Math.min(target, expandAnim + speed);
-        } else if (expandAnim > target) {
-            expandAnim = Math.max(target, expandAnim - speed);
+    private float stepTowards(float current, float target, float dtSeconds, float speedPerSec) {
+        float maxDelta = speedPerSec * dtSeconds;
+        if (current < target) return Math.min(target, current + maxDelta);
+        if (current > target) return Math.max(target, current - maxDelta);
+        return current;
+    }
+
+    private float easeOutCubic(float t) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, t));
+        float inv = 1.0f - clamped;
+        return 1.0f - inv * inv * inv;
+    }
+
+    private void updateAnimations() {
+        long now = System.nanoTime();
+        float dt = Math.min(0.05f, Math.max(0.001f, (now - lastFrameNs) / 1_000_000_000.0f));
+        lastFrameNs = now;
+
+        float targetScreen = closingAnimated ? 0.0f : 1.0f;
+        screenAnim = stepTowards(screenAnim, targetScreen, dt, 6.5f);
+
+        if (closingAnimated && screenAnim <= 0.01f && this.minecraft != null) {
+            closingAnimated = false;
+            this.minecraft.setScreen(null);
+            return;
         }
+
+        float targetExpand = (expandedNode != null && !expandedNode.subSettings.isEmpty()) ? 1.0f : 0.0f;
+        expandAnim = stepTowards(expandAnim, targetExpand, dt, 5.5f);
+
+        float targetPicker = (activeColorSetter != null) ? 1.0f : 0.0f;
+        pickerAnim = stepTowards(pickerAnim, targetPicker, dt, 7.0f);
     }
 
     private void drawText(GuiGraphicsExtractor graphics, String text, int x, int y, int color) {
@@ -191,8 +230,12 @@ public class ControlPanelScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
-        stepExpandAnimation();
+        updateAnimations();
 
+        float easedScreen = easeOutCubic(screenAnim);
+        float easedExpand = easeOutCubic(expandAnim);
+
+        int ySlide = Math.round((1.0f - easedScreen) * -10.0f);
         int accent = (FeatureState.accentColor & 0x00FFFFFF) | 0xFF000000;
         int headerAccent = blendRgb(HEADER_ACCENT, accent, 0.45f);
 
@@ -201,8 +244,10 @@ public class ControlPanelScreen extends Screen {
             String title = entry.getKey();
             List<ModuleNode> items = entry.getValue();
 
+            // Лёгкий каскадный сдвиг колонок при открытии/закрытии
+            int colDelaySlide = Math.round((1.0f - easedScreen) * (-6.0f - colIdx * 3.0f));
             int px = START_X + colIdx * (PANEL_W + PANEL_GAP) - horizontalScroll;
-            int py = START_Y;
+            int py = START_Y + ySlide + colDelaySlide;
 
             int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
             int maxScroll = Math.max(0, items.size() - MAX_VISIBLE_ROWS);
@@ -214,8 +259,8 @@ public class ControlPanelScreen extends Screen {
                 int idx = r + scroll;
                 if (idx >= items.size()) break;
                 ModuleNode node = items.get(idx);
-                if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.01f) {
-                    extraH += Math.round(node.subSettings.size() * SUB_ROW_H * expandAnim);
+                if (node == expandedNode && !node.subSettings.isEmpty() && easedExpand > 0.01f) {
+                    extraH += Math.round(node.subSettings.size() * SUB_ROW_H * easedExpand);
                 }
             }
 
@@ -223,14 +268,16 @@ public class ControlPanelScreen extends Screen {
             int bodyTop = py + HEADER_H;
             int bodyBottom = bodyTop + bodyH;
 
-            // Шапка панели
-            graphics.fill(px, py, px + PANEL_W, py + HEADER_H, HEADER_BG);
-            graphics.fill(px, py + HEADER_H - 1, px + PANEL_W, py + HEADER_H, headerAccent);
-            drawText(graphics, title, px + 4, py + 2, 0xFFE6ECF5);
+            int panelBg = scaleAlpha(PANEL_BG, easedScreen);
+            int headerBg = scaleAlpha(HEADER_BG, easedScreen);
+            int borderCol = scaleAlpha(BORDER_COL, easedScreen);
 
-            // Тело панели
-            graphics.fill(px, bodyTop, px + PANEL_W, bodyBottom, PANEL_BG);
-            drawBox(graphics, px, py, px + PANEL_W, bodyBottom, BORDER_COL);
+            graphics.fill(px, py, px + PANEL_W, py + HEADER_H, headerBg);
+            graphics.fill(px, py + HEADER_H - 1, px + PANEL_W, py + HEADER_H, scaleAlpha(headerAccent, easedScreen));
+            drawText(graphics, title, px + 4, py + 2, scaleAlpha(0xFFE6ECF5, easedScreen));
+
+            graphics.fill(px, bodyTop, px + PANEL_W, bodyBottom, panelBg);
+            drawBox(graphics, px, py, px + PANEL_W, bodyBottom, borderCol);
 
             int curY = bodyTop + 1;
             for (int r = 0; r < visibleCount; r++) {
@@ -239,54 +286,64 @@ public class ControlPanelScreen extends Screen {
 
                 ModuleNode node = items.get(idx);
                 int ry = curY;
-                boolean hovered = mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
+                boolean hovered = !closingAnimated
+                        && mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H;
+
+                String hoverKey = title + ":" + node.name;
+                float hProg = hoverProgressMap.getOrDefault(hoverKey, 0.0f);
+                hProg = stepTowards(hProg, hovered ? 1.0f : 0.0f, 0.016f, 8.0f);
+                hoverProgressMap.put(hoverKey, hProg);
+
                 boolean enabled = node.getter.getAsBoolean();
 
                 if (enabled) {
-                    graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, ACTIVE_ROW_BG);
+                    graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, scaleAlpha(ACTIVE_ROW_BG, easedScreen));
                 }
-                if (hovered) {
-                    graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, ROW_HOVER);
+                if (hProg > 0.01f) {
+                    int hoverFill = scaleAlpha(ROW_HOVER, hProg * easedScreen);
+                    graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, hoverFill);
                 }
 
+                int hoverShiftX = Math.round(hProg * 2.0f);
                 String label = enabled ? "▸ " + node.name : node.name;
-                drawText(graphics, label, px + 4, ry + 2, enabled ? ACTIVE_TEXT : INACTIVE_TEXT);
+                int rawTextCol = enabled ? ACTIVE_TEXT : INACTIVE_TEXT;
+                drawText(graphics, label, px + 4 + hoverShiftX, ry + 2, scaleAlpha(rawTextCol, easedScreen));
 
                 if (!node.subSettings.isEmpty()) {
                     boolean open = expandedNode == node;
-                    drawText(graphics, open ? "▾" : "▸", px + PANEL_W - 9, ry + 2, MUTED_HINT);
+                    drawText(graphics, open ? "▾" : "▸", px + PANEL_W - 9, ry + 2, scaleAlpha(MUTED_HINT, easedScreen));
                 }
 
                 curY += ROW_H;
 
-                // Анимированное раскрытие доп. настроек прямо под функцией
-                if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.01f) {
+                if (node == expandedNode && !node.subSettings.isEmpty() && easedExpand > 0.01f) {
                     int fullSubH = node.subSettings.size() * SUB_ROW_H;
-                    int animSubH = Math.round(fullSubH * expandAnim);
+                    int animSubH = Math.round(fullSubH * easedExpand);
                     if (animSubH > 0) {
-                        graphics.fill(px + 2, curY, px + PANEL_W - 2, curY + animSubH, SUB_BG);
+                        graphics.fill(px + 2, curY, px + PANEL_W - 2, curY + animSubH, scaleAlpha(SUB_BG, easedScreen * easedExpand));
                         int maxVisibleSubRows = animSubH / SUB_ROW_H;
                         for (int s = 0; s < maxVisibleSubRows; s++) {
                             SubSetting sub = node.subSettings.get(s);
                             int sy = curY + s * SUB_ROW_H;
-                            boolean subHover = mouseX >= px + 2 && mouseX <= px + PANEL_W - 2
+                            boolean subHover = !closingAnimated
+                                    && mouseX >= px + 2 && mouseX <= px + PANEL_W - 2
                                     && mouseY >= sy && mouseY < sy + SUB_ROW_H;
                             if (subHover) {
-                                graphics.fill(px + 2, sy, px + PANEL_W - 2, sy + SUB_ROW_H, ROW_HOVER);
+                                graphics.fill(px + 2, sy, px + PANEL_W - 2, sy + SUB_ROW_H, scaleAlpha(ROW_HOVER, easedScreen));
                             }
 
                             if (sub.kind == SubKind.TOGGLE) {
                                 boolean on = sub.boolGetter.getAsBoolean();
                                 drawText(graphics, (on ? "✓ " : "· ") + sub.label, px + 7, sy + 2,
-                                        on ? ACTIVE_TEXT : MUTED_HINT);
+                                        scaleAlpha(on ? ACTIVE_TEXT : MUTED_HINT, easedScreen));
                             } else if (sub.kind == SubKind.COLOR) {
-                                int c = sub.colorGetter.getAsInt() | 0xFF000000;
-                                drawText(graphics, "· " + sub.label, px + 7, sy + 2, INACTIVE_TEXT);
-                                graphics.fill(px + PANEL_W - 13, sy + 2, px + PANEL_W - 6, sy + 8, c);
-                                drawBox(graphics, px + PANEL_W - 14, sy + 1, px + PANEL_W - 5, sy + 9, BORDER_COL);
+                                int c = (sub.colorGetter.getAsInt() & 0x00FFFFFF) | 0xFF000000;
+                                drawText(graphics, "· " + sub.label, px + 7, sy + 2, scaleAlpha(INACTIVE_TEXT, easedScreen));
+                                graphics.fill(px + PANEL_W - 13, sy + 2, px + PANEL_W - 6, sy + 8, scaleAlpha(c, easedScreen));
+                                drawBox(graphics, px + PANEL_W - 14, sy + 1, px + PANEL_W - 5, sy + 9, scaleAlpha(BORDER_COL, easedScreen));
                             } else {
-                                drawText(graphics, "· " + sub.label, px + 7, sy + 2, INACTIVE_TEXT);
+                                drawText(graphics, "· " + sub.label, px + 7, sy + 2, scaleAlpha(INACTIVE_TEXT, easedScreen));
                             }
                         }
                         curY += animSubH;
@@ -299,34 +356,34 @@ public class ControlPanelScreen extends Screen {
                 int trackH = Math.max(6, bodyH - 4);
                 int thumbH = Math.max(6, trackH * visibleCount / items.size());
                 int thumbY = trackTop + (trackH - thumbH) * scroll / maxScroll;
-                graphics.fill(px + PANEL_W - 2, thumbY, px + PANEL_W - 1, thumbY + thumbH, headerAccent);
+                graphics.fill(px + PANEL_W - 2, thumbY, px + PANEL_W - 1, thumbY + thumbH, scaleAlpha(headerAccent, easedScreen));
             }
 
             colIdx++;
         }
 
-        if (activeColorSetter != null) {
-            renderColorWheelModal(graphics);
+        if (activeColorSetter != null && pickerAnim > 0.01f) {
+            renderColorWheelModal(graphics, easeOutCubic(pickerAnim));
         }
     }
 
-    private void renderColorWheelModal(GuiGraphicsExtractor graphics) {
+    private void renderColorWheelModal(GuiGraphicsExtractor graphics, float anim) {
         int boxW = 132;
         int boxH = 128;
         int boxX = (this.width - boxW) / 2;
-        int boxY = (this.height - boxH) / 2;
+        int boxY = (this.height - boxH) / 2 + Math.round((1.0f - anim) * 8.0f);
 
-        graphics.fill(boxX, boxY, boxX + boxW, boxY + boxH, 0xF5141820);
-        graphics.fill(boxX, boxY, boxX + boxW, boxY + 13, HEADER_BG);
-        graphics.fill(boxX, boxY + 12, boxX + boxW, boxY + 13, HEADER_ACCENT);
-        drawText(graphics, activeColorTitle, boxX + 5, boxY + 2, 0xFFE6ECF5);
-        drawText(graphics, "✕", boxX + boxW - 10, boxY + 2, INACTIVE_TEXT);
-        drawBox(graphics, boxX, boxY, boxX + boxW, boxY + boxH, BORDER_COL);
+        graphics.fill(boxX, boxY, boxX + boxW, boxY + boxH, scaleAlpha(0xF5141820, anim));
+        graphics.fill(boxX, boxY, boxX + boxW, boxY + 13, scaleAlpha(HEADER_BG, anim));
+        graphics.fill(boxX, boxY + 12, boxX + boxW, boxY + 13, scaleAlpha(HEADER_ACCENT, anim));
+        drawText(graphics, activeColorTitle, boxX + 5, boxY + 2, scaleAlpha(0xFFE6ECF5, anim));
+        drawText(graphics, "✕", boxX + boxW - 10, boxY + 2, scaleAlpha(INACTIVE_TEXT, anim));
+        drawBox(graphics, boxX, boxY, boxX + boxW, boxY + boxH, scaleAlpha(BORDER_COL, anim));
 
         int cx = boxX + 50;
         int cy = boxY + 58;
 
-        drawFilledCircle(graphics, cx, cy, WHEEL_R + 2, 0xFFCBD5E1);
+        drawFilledCircle(graphics, cx, cy, WHEEL_R + 2, scaleAlpha(0xFFCBD5E1, anim));
 
         for (int dy = -WHEEL_R; dy <= WHEEL_R; dy++) {
             int maxDx = (int) Math.sqrt(WHEEL_R * WHEEL_R - dy * dy);
@@ -335,14 +392,14 @@ public class ControlPanelScreen extends Screen {
                 float sat = (float) Math.min(1.0, dist / WHEEL_R);
                 double angle = Math.atan2(dy, dx);
                 float hue = (float) ((angle / (2.0 * Math.PI)) + 1.0) % 1.0f;
-                graphics.fill(cx + dx, cy + dy, cx + dx + 1, cy + dy + 1, Color.HSBtoRGB(hue, sat, 1.0f));
+                graphics.fill(cx + dx, cy + dy, cx + dx + 1, cy + dy + 1, scaleAlpha(Color.HSBtoRGB(hue, sat, 1.0f), anim));
             }
         }
 
         double selAngle = pickerHue * 2.0 * Math.PI;
         int selX = cx + (int) Math.round(Math.cos(selAngle) * pickerSat * WHEEL_R);
         int selY = cy + (int) Math.round(Math.sin(selAngle) * pickerSat * WHEEL_R);
-        drawCircleOutline(graphics, selX, selY, 3, 0xFFFFFFFF);
+        drawCircleOutline(graphics, selX, selY, 3, scaleAlpha(0xFFFFFFFF, anim));
 
         int barX = boxX + 102;
         int barY = boxY + 21;
@@ -350,26 +407,26 @@ public class ControlPanelScreen extends Screen {
         int barH = 74;
         for (int y = 0; y < barH; y++) {
             float v = 1.0f - (y / (float) (barH - 1));
-            graphics.fill(barX, barY + y, barX + barW, barY + y + 1, Color.HSBtoRGB(pickerHue, pickerSat, v));
+            graphics.fill(barX, barY + y, barX + barW, barY + y + 1, scaleAlpha(Color.HSBtoRGB(pickerHue, pickerSat, v), anim));
         }
-        drawBox(graphics, barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, BORDER_COL);
+        drawBox(graphics, barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, scaleAlpha(BORDER_COL, anim));
 
         int arrowY = barY + Math.round((1.0f - pickerVal) * (barH - 1));
-        graphics.fill(barX - 4, arrowY - 1, barX - 1, arrowY + 2, 0xFF8AB4F8);
+        graphics.fill(barX - 4, arrowY - 1, barX - 1, arrowY + 2, scaleAlpha(0xFF8AB4F8, anim));
 
         int hexX = boxX + 10;
         int hexY = boxY + 103;
         int hexW = 86;
         int hexH = 16;
-        graphics.fill(hexX, hexY, hexX + hexW, hexY + hexH, 0xFF1D2330);
-        drawBox(graphics, hexX, hexY, hexX + hexW, hexY + hexH, BORDER_COL);
+        graphics.fill(hexX, hexY, hexX + hexW, hexY + hexH, scaleAlpha(0xFF1D2330, anim));
+        drawBox(graphics, hexX, hexY, hexX + hexW, hexY + hexH, scaleAlpha(BORDER_COL, anim));
 
         int rgb = Color.HSBtoRGB(pickerHue, pickerSat, pickerVal) & 0x00FFFFFF;
         String hex = String.format("#%06x", rgb);
-        drawText(graphics, hex, hexX + (hexW - this.font.width(hex)) / 2, hexY + 4, 0xFFE6ECF5);
+        drawText(graphics, hex, hexX + (hexW - this.font.width(hex)) / 2, hexY + 4, scaleAlpha(0xFFE6ECF5, anim));
 
-        graphics.fill(barX - 1, hexY, barX + barW + 1, hexY + hexH, 0xFF000000 | rgb);
-        drawBox(graphics, barX - 1, hexY, barX + barW + 1, hexY + hexH, BORDER_COL);
+        graphics.fill(barX - 1, hexY, barX + barW + 1, hexY + hexH, scaleAlpha(0xFF000000 | rgb, anim));
+        drawBox(graphics, barX - 1, hexY, barX + barW + 1, hexY + hexH, scaleAlpha(BORDER_COL, anim));
     }
 
     private void updatePickerFromMouse(double mouseX, double mouseY) {
@@ -399,6 +456,7 @@ public class ControlPanelScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (closingAnimated) return true;
         if (activeColorSetter != null) {
             return true;
         }
@@ -471,11 +529,12 @@ public class ControlPanelScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if (closingAnimated) return true;
+
         double mouseX = extractX(event);
         double mouseY = extractY(event);
         int button = extractButton(event);
 
-        // Клик в модальном цветовом круге
         if (activeColorSetter != null) {
             int boxW = 132;
             int boxH = 128;
@@ -486,10 +545,7 @@ public class ControlPanelScreen extends Screen {
             boolean closeHit = mouseX >= boxX + boxW - 15 && mouseX <= boxX + boxW && mouseY >= boxY && mouseY <= boxY + 13;
 
             if (!inside || closeHit) {
-                activeColorSetter = null;
-                activeColorGetter = null;
-                draggingWheel = false;
-                draggingBrightness = false;
+                closeColorWheel();
                 return true;
             }
 
@@ -512,7 +568,6 @@ public class ControlPanelScreen extends Screen {
             return true;
         }
 
-        // Клик по колонкам и раскрытым подпунктам под функцией
         int colIdx = 0;
         for (Map.Entry<String, List<ModuleNode>> entry : panels.entrySet()) {
             String title = entry.getKey();
@@ -534,7 +589,6 @@ public class ControlPanelScreen extends Screen {
                 if (mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H) {
 
-                    // ПКМ открывает/закрывает доп. настройки (если они есть)
                     if (button == 1) {
                         if (!node.subSettings.isEmpty()) {
                             expandedNode = (expandedNode == node) ? null : node;
@@ -543,7 +597,6 @@ public class ControlPanelScreen extends Screen {
                         return true;
                     }
 
-                    // ЛКМ по самой строке функции включает/выключает функцию
                     if (button == 0) {
                         node.setter.accept(!node.getter.getAsBoolean());
                         return true;
@@ -552,7 +605,6 @@ public class ControlPanelScreen extends Screen {
 
                 curY += ROW_H;
 
-                // Проверка кликов по раскрытым подпунктам под функцией
                 if (node == expandedNode && !node.subSettings.isEmpty() && expandAnim > 0.25f) {
                     int fullSubH = node.subSettings.size() * SUB_ROW_H;
                     int animSubH = Math.round(fullSubH * expandAnim);
@@ -600,8 +652,34 @@ public class ControlPanelScreen extends Screen {
     }
 
     @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+        int keyCode = extractKeyCode(event);
+        if (keyCode == GLFW.GLFW_KEY_RIGHT_SHIFT) {
+            if (activeColorSetter != null) {
+                closeColorWheel();
+                return true;
+            }
+            closingAnimated = true;
+            return true;
+        }
+        return super.keyPressed(event);
+    }
+
+    private int extractKeyCode(Object event) {
+        Object v = invokeNoArg(event, "key", "getKey", "keyCode", "getKeyCode");
+        return v instanceof Number n ? n.intValue() : -1;
+    }
+
+    @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    private int scaleAlpha(int argb, float factor) {
+        float f = Math.max(0.0f, Math.min(1.0f, factor));
+        int baseA = (argb >> 24) & 0xFF;
+        int a = Math.round(baseA * f);
+        return (a << 24) | (argb & 0x00FFFFFF);
     }
 
     private int blendRgb(int baseArgb, int tintArgb, float ratio) {
@@ -628,4 +706,54 @@ public class ControlPanelScreen extends Screen {
         graphics.fill(x2 - 1, y1, x2, y2, color);
     }
 
-    private void drawFilledCircle(GuiGraphicsExtractor graphics, int cx, int
+    private void drawFilledCircle(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
+        for (int dy = -r; dy <= r; dy++) {
+            int dx = (int) Math.sqrt(r * r - dy * dy);
+            graphics.fill(cx - dx, cy + dy, cx + dx + 1, cy + dy + 1, color);
+        }
+    }
+
+    private void drawCircleOutline(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
+        for (int deg = 0; deg < 360; deg += 12) {
+            double rad = Math.toRadians(deg);
+            int x = cx + (int) Math.round(Math.cos(rad) * r);
+            int y = cy + (int) Math.round(Math.sin(rad) * r);
+            graphics.fill(x, y, x + 1, y + 1, color);
+        }
+    }
+
+    private enum SubKind {
+        TOGGLE,
+        COLOR,
+        ACTION
+    }
+
+    private record SubSetting(
+            String label,
+            SubKind kind,
+            BooleanSupplier boolGetter,
+            Consumer<Boolean> boolSetter,
+            IntSupplier colorGetter,
+            IntConsumer colorSetter,
+            Runnable action
+    ) {
+        static SubSetting toggle(String label, BooleanSupplier getter, Consumer<Boolean> setter) {
+            return new SubSetting(label, SubKind.TOGGLE, getter, setter, null, null, null);
+        }
+
+        static SubSetting color(String label, IntSupplier getter, IntConsumer setter) {
+            return new SubSetting(label, SubKind.COLOR, null, null, getter, setter, null);
+        }
+
+        static SubSetting action(String label, Runnable action) {
+            return new SubSetting(label, SubKind.ACTION, null, null, null, null, action);
+        }
+    }
+
+    private record ModuleNode(
+            String name,
+            BooleanSupplier getter,
+            Consumer<Boolean> setter,
+            List<SubSetting> subSettings
+    ) {}
+}
