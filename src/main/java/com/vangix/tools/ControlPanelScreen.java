@@ -18,13 +18,14 @@ import java.util.function.IntSupplier;
 
 public class ControlPanelScreen extends Screen {
 
-    private static final int PANEL_W = 104;
-    private static final int PANEL_GAP = 6;
-    private static final int HEADER_H = 14;
-    private static final int ROW_H = 12;
-    private static final int MAX_VISIBLE_ROWS = 9;
-    private static final int START_X = 8;
-    private static final int START_Y = 8;
+    // Компактные размеры, чтобы оставалось место под 3-4 дополнительных раздела
+    private static final int PANEL_W = 102;
+    private static final int PANEL_GAP = 5;
+    private static final int HEADER_H = 13;
+    private static final int ROW_H = 11;
+    private static final int MAX_VISIBLE_ROWS = 8;
+    private static final int START_X = 6;
+    private static final int START_Y = 6;
 
     private static final int BODY_BG = 0xCC121622;
     private static final int ROW_HOVER = 0x662B354D;
@@ -32,127 +33,103 @@ public class ControlPanelScreen extends Screen {
     private static final int HEADER_TEXT = 0xFFFFFFFF;
     private static final int BORDER_COL = 0x99262D40;
 
-    private final Map<String, List<ModuleEntry>> panels = new LinkedHashMap<>();
-    private final Map<String, Integer> panelScroll = new LinkedHashMap<>();
+    private final Map<String, List<MenuItem>> categories = new LinkedHashMap<>();
+    private final Map<String, Integer> categoryScroll = new LinkedHashMap<>();
     private int horizontalScroll = 0;
 
-    private ModuleEntry activeColorTarget = null;
+    // Состояние модального Color Picker (круг + яркость + HEX)
+    private MenuItem activeColorItem = null;
     private float pickerHue = 0.42f;
     private float pickerSat = 0.65f;
     private float pickerVal = 0.65f;
     private boolean draggingWheel = false;
     private boolean draggingBrightness = false;
 
-    private static final int PICKER_BOX_W = 136;
-    private static final int PICKER_BOX_H = 142;
-    private static final int WHEEL_RADIUS = 44;
+    private static final int PICKER_W = 134;
+    private static final int PICKER_H = 138;
+    private static final int WHEEL_R = 42;
 
     public ControlPanelScreen() {
         super(Component.literal("Vangix Tools"));
-        initModules();
+        buildMenu();
     }
 
-    private void initModules() {
-        addPanel("Movement", List.of(
-                new ModuleEntry("Anti Levitate", () -> false, v -> {}),
-                new ModuleEntry("Anti Void", () -> false, v -> {}),
-                new ModuleEntry("Auto Walk", () -> false, v -> {}),
-                new ModuleEntry("Boat Fly", () -> false, v -> {}),
-                new ModuleEntry("Boat Phase", () -> false, v -> {}),
-                new ModuleEntry("Click TP", () -> false, v -> {}),
-                new ModuleEntry("Elytra +", () -> false, v -> {})
-        ));
-
-        addPanel("Player", List.of(
-                new ModuleEntry("Auto Tool", () -> FeatureState.quickHarvest, v -> FeatureState.quickHarvest = v),
-                new ModuleEntry("Auto Totem", () -> FeatureState.offhandGuard, v -> FeatureState.offhandGuard = v),
-                new ModuleEntry("Entity Tag", () -> FeatureState.showEntityTag, v -> FeatureState.showEntityTag = v),
-                new ModuleEntry("Entity Gear", () -> FeatureState.showEntityGear, v -> FeatureState.showEntityGear = v)
-        ));
-
-        addPanel("Combat", List.of(
-                new ModuleEntry("Aim Assist", () -> false, v -> {}),
-                new ModuleEntry("Anti-Knockback", () -> false, v -> {}),
-                new ModuleEntry("Auto Clicker", () -> false, v -> {}),
-                new ModuleEntry("Auto Crystal", () -> false, v -> {}),
-                new ModuleEntry("Auto Log", () -> false, v -> {})
-        ));
-
-        addPanel("Render", List.of(
-                new ModuleEntry("Player ESP", () -> FeatureState.entitySight, v -> FeatureState.entitySight = v),
-                new ModuleEntry("Block ESP", () -> FeatureState.containerSight, v -> FeatureState.containerSight = v),
-                new ModuleEntry("Tracers",
+    private void buildMenu() {
+        addCategory("Visuals", List.of(
+                new MenuItem("Player ESP", () -> FeatureState.entitySight, v -> FeatureState.entitySight = v),
+                new MenuItem("Block ESP", () -> FeatureState.containerSight, v -> FeatureState.containerSight = v),
+                new MenuItem("Tracers",
                         () -> FeatureState.lineGuides,
                         v -> FeatureState.lineGuides = v,
                         FeatureState::getGuideColor,
                         FeatureState::setGuideColor),
-                new ModuleEntry("Fullbright", () -> FeatureState.fullbrightFlag, v -> FeatureState.fullbrightFlag = v),
-                new ModuleEntry("Status HUD",
+                new MenuItem("Fullbright", () -> FeatureState.fullbrightFlag, v -> FeatureState.fullbrightFlag = v),
+                new MenuItem("Status HUD",
                         () -> FeatureState.statusHud,
                         v -> FeatureState.statusHud = v,
                         FeatureState::getHudColor,
-                        FeatureState::setHudColor)
+                        FeatureState::setHudColor),
+                new MenuItem("Chunk Finder", () -> FeatureState.areaScanner, v -> FeatureState.areaScanner = v)
         ));
 
-        addPanel("World", List.of(
-                new ModuleEntry("Chunk Finder", () -> FeatureState.areaScanner, v -> FeatureState.areaScanner = v),
-                new ModuleEntry("Tracer Blocks", () -> FeatureState.tracerBlocks, v -> FeatureState.tracerBlocks = v),
-                new ModuleEntry("Storage Filter", () -> FeatureState.filterStorage, v -> FeatureState.filterStorage = v),
-                new ModuleEntry("Diamond Filter", () -> FeatureState.filterDiamondBlocks, v -> FeatureState.filterDiamondBlocks = v),
-                new ModuleEntry("Netherite Filter", () -> FeatureState.filterNetheriteBlocks, v -> FeatureState.filterNetheriteBlocks = v),
-                new ModuleEntry("Emerald Filter", () -> FeatureState.filterEmeraldBlocks, v -> FeatureState.filterEmeraldBlocks = v),
-                new ModuleEntry("Redstone Filter", () -> FeatureState.filterRedstoneBlocks, v -> FeatureState.filterRedstoneBlocks = v)
+        addCategory("Player", List.of(
+                new MenuItem("Auto Tool", () -> FeatureState.quickHarvest, v -> FeatureState.quickHarvest = v),
+                new MenuItem("Auto Totem", () -> FeatureState.offhandGuard, v -> FeatureState.offhandGuard = v),
+                new MenuItem("Entity Tag", () -> FeatureState.showEntityTag, v -> FeatureState.showEntityTag = v),
+                new MenuItem("Entity Gear", () -> FeatureState.showEntityGear, v -> FeatureState.showEntityGear = v),
+                new MenuItem("Tracer Blocks", () -> FeatureState.tracerBlocks, v -> FeatureState.tracerBlocks = v)
         ));
 
-        addPanel("Gui", List.of(
-                new ModuleEntry("Theme Color",
+        addCategory("Filters", List.of(
+                new MenuItem("Storage", () -> FeatureState.filterStorage, v -> FeatureState.filterStorage = v),
+                new MenuItem("Diamond", () -> FeatureState.filterDiamondBlocks, v -> FeatureState.filterDiamondBlocks = v),
+                new MenuItem("Netherite", () -> FeatureState.filterNetheriteBlocks, v -> FeatureState.filterNetheriteBlocks = v),
+                new MenuItem("Emerald", () -> FeatureState.filterEmeraldBlocks, v -> FeatureState.filterEmeraldBlocks = v),
+                new MenuItem("Redstone", () -> FeatureState.filterRedstoneBlocks, v -> FeatureState.filterRedstoneBlocks = v),
+                new MenuItem("Gilded Black.", () -> FeatureState.filterGildedBlackstone, v -> FeatureState.filterGildedBlackstone = v),
+                new MenuItem("Spawners", () -> FeatureState.filterCustomSpawners, v -> FeatureState.filterCustomSpawners = v)
+        ));
+
+        addCategory("Colors", List.of(
+                new MenuItem("Tracer Color",
                         () -> true,
-                        v -> openColorPickerByName("Theme Color"),
+                        v -> openColorByTitle("Tracer Color"),
+                        FeatureState::getGuideColor,
+                        FeatureState::setGuideColor),
+                new MenuItem("HUD Color",
+                        () -> true,
+                        v -> openColorByTitle("HUD Color"),
+                        FeatureState::getHudColor,
+                        FeatureState::setHudColor),
+                new MenuItem("Accent Color",
+                        () -> true,
+                        v -> openColorByTitle("Accent Color"),
                         () -> FeatureState.accentColor,
                         c -> FeatureState.accentColor = c),
-                new ModuleEntry("Reset Scroll", () -> false, v -> {
-                    horizontalScroll = 0;
-                    panelScroll.replaceAll((k, val) -> 0);
-                })
-        ));
-
-        addPanel("Presets", List.of(
-                new ModuleEntry("Legit Default", () -> false, v -> {
-                    FeatureState.quickHarvest = true;
-                    FeatureState.offhandGuard = true;
-                    FeatureState.statusHud = true;
-                }),
-                new ModuleEntry("Visuals Only", () -> false, v -> {
-                    FeatureState.entitySight = true;
-                    FeatureState.containerSight = true;
-                    FeatureState.lineGuides = true;
-                }),
-                new ModuleEntry("Clear All", () -> false, v -> {
-                    FeatureState.entitySight = false;
-                    FeatureState.containerSight = false;
-                    FeatureState.lineGuides = false;
-                    FeatureState.fullbrightFlag = false;
-                    FeatureState.areaScanner = false;
-                    FeatureState.quickHarvest = false;
-                    FeatureState.offhandGuard = false;
-                })
+                new MenuItem("Cycle Tracer", () -> false, v -> FeatureState.cycleGuideColor()),
+                new MenuItem("Cycle HUD", () -> false, v -> FeatureState.cycleHudColor())
         ));
     }
 
-    private void openColorPickerByName(String name) {
-        for (List<ModuleEntry> list : panels.values()) {
-            for (ModuleEntry e : list) {
-                if (e.name.equals(name) && e.colorGetter != null) {
-                    openColorPicker(e);
+    private void addCategory(String name, List<MenuItem> items) {
+        categories.put(name, new ArrayList<>(items));
+        categoryScroll.putIfAbsent(name, 0);
+    }
+
+    private void openColorByTitle(String title) {
+        for (List<MenuItem> list : categories.values()) {
+            for (MenuItem item : list) {
+                if (item.title.equals(title) && item.colorGetter != null) {
+                    openColorPicker(item);
                     return;
                 }
             }
         }
     }
 
-    private void openColorPicker(ModuleEntry entry) {
-        this.activeColorTarget = entry;
-        int argb = entry.colorGetter.getAsInt();
+    private void openColorPicker(MenuItem item) {
+        this.activeColorItem = item;
+        int argb = item.colorGetter.getAsInt();
         int r = (argb >> 16) & 0xFF;
         int g = (argb >> 8) & 0xFF;
         int b = argb & 0xFF;
@@ -162,53 +139,48 @@ public class ControlPanelScreen extends Screen {
         this.pickerVal = hsb[2];
     }
 
-    private void applyPickerColor() {
-        if (activeColorTarget == null || activeColorTarget.colorSetter == null) return;
+    private void applyColor() {
+        if (activeColorItem == null || activeColorItem.colorSetter == null) return;
         int rgb = Color.HSBtoRGB(pickerHue, pickerSat, pickerVal) & 0x00FFFFFF;
-        activeColorTarget.colorSetter.accept(0xFF000000 | rgb);
+        activeColorItem.colorSetter.accept(0xFF000000 | rgb);
     }
 
-    private void addPanel(String title, List<ModuleEntry> entries) {
-        panels.put(title, new ArrayList<>(entries));
-        panelScroll.putIfAbsent(title, 0);
-    }
-
-    private void drawLabel(GuiGraphicsExtractor graphics, String text, int x, int y, int color) {
+    private void drawText(GuiGraphicsExtractor graphics, String text, int x, int y, int color) {
         graphics.text(this.font, Component.literal(text), x, y, color);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
-        int headerBg = (FeatureState.accentColor & 0x00FFFFFF) | 0xD9000000;
-        int activeText = lightenColor(FeatureState.accentColor, 0.35f);
+        int headerColor = (FeatureState.accentColor & 0x00FFFFFF) | 0xD9000000;
+        int activeTextColor = lightenColor(FeatureState.accentColor, 0.35f);
 
-        int idx = 0;
-        for (Map.Entry<String, List<ModuleEntry>> entry : panels.entrySet()) {
+        int colIndex = 0;
+        for (Map.Entry<String, List<MenuItem>> entry : categories.entrySet()) {
             String title = entry.getKey();
-            List<ModuleEntry> items = entry.getValue();
+            List<MenuItem> items = entry.getValue();
 
-            int px = START_X + idx * (PANEL_W + PANEL_GAP) - horizontalScroll;
+            int px = START_X + colIndex * (PANEL_W + PANEL_GAP) - horizontalScroll;
             int py = START_Y;
 
-            int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
-            int bodyH = visibleCount * ROW_H + 2;
+            int visibleRows = Math.min(items.size(), MAX_VISIBLE_ROWS);
+            int bodyH = visibleRows * ROW_H + 2;
             int maxScroll = Math.max(0, items.size() - MAX_VISIBLE_ROWS);
-            int scroll = Math.max(0, Math.min(panelScroll.getOrDefault(title, 0), maxScroll));
-            panelScroll.put(title, scroll);
+            int scroll = Math.max(0, Math.min(categoryScroll.getOrDefault(title, 0), maxScroll));
+            categoryScroll.put(title, scroll);
 
-            graphics.fill(px, py, px + PANEL_W, py + HEADER_H, headerBg);
-            drawLabel(graphics, title, px + 4, py + 3, HEADER_TEXT);
+            graphics.fill(px, py, px + PANEL_W, py + HEADER_H, headerColor);
+            drawText(graphics, title, px + 4, py + 3, HEADER_TEXT);
 
             int bodyTop = py + HEADER_H;
             int bodyBottom = bodyTop + bodyH;
             graphics.fill(px, bodyTop, px + PANEL_W, bodyBottom, BODY_BG);
-            renderBorder(graphics, px, py, px + PANEL_W, bodyBottom, BORDER_COL);
+            drawRect(graphics, px, py, px + PANEL_W, bodyBottom, BORDER_COL);
 
-            for (int r = 0; r < visibleCount; r++) {
-                int itemIndex = r + scroll;
-                if (itemIndex >= items.size()) break;
+            for (int r = 0; r < visibleRows; r++) {
+                int idx = r + scroll;
+                if (idx >= items.size()) break;
 
-                ModuleEntry mod = items.get(itemIndex);
+                MenuItem item = items.get(idx);
                 int ry = bodyTop + 1 + r * ROW_H;
                 boolean hovered = mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H;
@@ -217,57 +189,57 @@ public class ControlPanelScreen extends Screen {
                     graphics.fill(px + 1, ry, px + PANEL_W - 1, ry + ROW_H, ROW_HOVER);
                 }
 
-                boolean enabled = mod.getter.getAsBoolean();
-                int textColor = enabled ? activeText : INACTIVE_TEXT;
-                String label = enabled ? "▸ " + mod.name : mod.name;
-                drawLabel(graphics, label, px + 4, ry + 2, textColor);
+                boolean enabled = item.getter.getAsBoolean();
+                int textCol = enabled ? activeTextColor : INACTIVE_TEXT;
+                String label = enabled ? "▸ " + item.title : item.title;
+                drawText(graphics, label, px + 4, ry + 2, textCol);
 
-                if (mod.colorGetter != null) {
-                    int swX = px + PANEL_W - 12;
+                if (item.colorGetter != null) {
+                    int swX = px + PANEL_W - 11;
                     int swY = ry + 3;
-                    int col = mod.colorGetter.getAsInt() | 0xFF000000;
-                    graphics.fill(swX, swY, swX + 6, swY + 6, col);
-                    renderBorder(graphics, swX - 1, swY - 1, swX + 7, swY + 7, 0xCCFFFFFF);
+                    int c = item.colorGetter.getAsInt() | 0xFF000000;
+                    graphics.fill(swX, swY, swX + 5, swY + 5, c);
+                    drawRect(graphics, swX - 1, swY - 1, swX + 6, swY + 6, 0xCCFFFFFF);
                 }
             }
 
             if (maxScroll > 0) {
                 int trackTop = bodyTop + 2;
-                int trackH = Math.max(8, bodyH - 4);
-                int thumbH = Math.max(8, trackH * visibleCount / items.size());
+                int trackH = Math.max(6, bodyH - 4);
+                int thumbH = Math.max(6, trackH * visibleRows / items.size());
                 int thumbY = trackTop + (trackH - thumbH) * scroll / maxScroll;
-                graphics.fill(px + PANEL_W - 3, thumbY, px + PANEL_W - 1, thumbY + thumbH, headerBg);
+                graphics.fill(px + PANEL_W - 3, thumbY, px + PANEL_W - 1, thumbY + thumbH, headerColor);
             }
 
-            idx++;
+            colIndex++;
         }
 
-        if (activeColorTarget != null) {
-            renderColorPickerModal(graphics);
+        if (activeColorItem != null) {
+            renderColorPicker(graphics);
         }
     }
 
-    private void renderColorPickerModal(GuiGraphicsExtractor graphics) {
-        int boxX = (this.width - PICKER_BOX_W) / 2;
-        int boxY = Math.max(START_Y + 118, (this.height - PICKER_BOX_H) / 2);
+    private void renderColorPicker(GuiGraphicsExtractor graphics) {
+        int boxX = (this.width - PICKER_W) / 2;
+        int boxY = Math.max(START_Y + 112, (this.height - PICKER_H) / 2);
 
-        graphics.fill(boxX, boxY, boxX + PICKER_BOX_W, boxY + PICKER_BOX_H, 0xF02B2D31);
-        int headerBg = (FeatureState.accentColor & 0x00FFFFFF) | 0xE6000000;
-        graphics.fill(boxX, boxY, boxX + PICKER_BOX_W, boxY + 14, headerBg);
-        drawLabel(graphics, activeColorTarget.name + " Color", boxX + 5, boxY + 3, 0xFFFFFFFF);
-        drawLabel(graphics, "✕", boxX + PICKER_BOX_W - 10, boxY + 3, 0xFFFFFFFF);
-        renderBorder(graphics, boxX, boxY, boxX + PICKER_BOX_W, boxY + PICKER_BOX_H, 0xCC4A4F5A);
+        graphics.fill(boxX, boxY, boxX + PICKER_W, boxY + PICKER_H, 0xF02B2D31);
+        int headerColor = (FeatureState.accentColor & 0x00FFFFFF) | 0xE6000000;
+        graphics.fill(boxX, boxY, boxX + PICKER_W, boxY + 13, headerColor);
+        drawText(graphics, activeColorItem.title, boxX + 5, boxY + 3, 0xFFFFFFFF);
+        drawText(graphics, "✕", boxX + PICKER_W - 10, boxY + 3, 0xFFFFFFFF);
+        drawRect(graphics, boxX, boxY, boxX + PICKER_W, boxY + PICKER_H, 0xCC4A4F5A);
 
-        int cx = boxX + 56;
-        int cy = boxY + 64;
+        int cx = boxX + 55;
+        int cy = boxY + 62;
 
-        drawFilledCircle(graphics, cx, cy, WHEEL_RADIUS + 2, 0xFFE6E6E6);
+        drawFilledCircle(graphics, cx, cy, WHEEL_R + 2, 0xFFE6E6E6);
 
-        for (int dy = -WHEEL_RADIUS; dy <= WHEEL_RADIUS; dy++) {
-            int maxDx = (int) Math.sqrt(WHEEL_RADIUS * WHEEL_RADIUS - dy * dy);
+        for (int dy = -WHEEL_R; dy <= WHEEL_R; dy++) {
+            int maxDx = (int) Math.sqrt(WHEEL_R * WHEEL_R - dy * dy);
             for (int dx = -maxDx; dx <= maxDx; dx++) {
                 double dist = Math.sqrt(dx * dx + dy * dy);
-                float sat = (float) Math.min(1.0, dist / WHEEL_RADIUS);
+                float sat = (float) Math.min(1.0, dist / WHEEL_R);
                 double angle = Math.atan2(dy, dx);
                 float hue = (float) ((angle / (2.0 * Math.PI)) + 1.0) % 1.0f;
                 int argb = Color.HSBtoRGB(hue, sat, 1.0f);
@@ -276,92 +248,92 @@ public class ControlPanelScreen extends Screen {
         }
 
         double selAngle = pickerHue * 2.0 * Math.PI;
-        int selX = cx + (int) Math.round(Math.cos(selAngle) * pickerSat * WHEEL_RADIUS);
-        int selY = cy + (int) Math.round(Math.sin(selAngle) * pickerSat * WHEEL_RADIUS);
+        int selX = cx + (int) Math.round(Math.cos(selAngle) * pickerSat * WHEEL_R);
+        int selY = cy + (int) Math.round(Math.sin(selAngle) * pickerSat * WHEEL_R);
         drawCircleOutline(graphics, selX, selY, 4, 0xFFFFFFFF);
 
-        int barX = boxX + 114;
+        int barX = boxX + 112;
         int barY = boxY + 20;
         int barW = 10;
-        int barH = 88;
+        int barH = 84;
         for (int y = 0; y < barH; y++) {
             float v = 1.0f - (y / (float) (barH - 1));
             int col = Color.HSBtoRGB(pickerHue, pickerSat, v);
             graphics.fill(barX, barY + y, barX + barW, barY + y + 1, col);
         }
-        renderBorder(graphics, barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, 0xFF1A1B1E);
+        drawRect(graphics, barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, 0xFF1A1B1E);
 
         int arrowY = barY + Math.round((1.0f - pickerVal) * (barH - 1));
         graphics.fill(barX - 5, arrowY - 2, barX - 2, arrowY + 3, 0xFF1E88E5);
         graphics.fill(barX - 2, arrowY - 1, barX, arrowY + 2, 0xFF1E88E5);
 
         int hexBoxX = boxX + 12;
-        int hexBoxY = boxY + 116;
-        int hexBoxW = 92;
-        int hexBoxH = 18;
+        int hexBoxY = boxY + 112;
+        int hexBoxW = 90;
+        int hexBoxH = 17;
         graphics.fill(hexBoxX, hexBoxY, hexBoxX + hexBoxW, hexBoxY + hexBoxH, 0xFF1E1F22);
 
         int currentRgb = Color.HSBtoRGB(pickerHue, pickerSat, pickerVal) & 0x00FFFFFF;
         String hexText = String.format("#%06x", currentRgb);
         int textW = this.font.width(hexText);
-        drawLabel(graphics, hexText, hexBoxX + (hexBoxW - textW) / 2, hexBoxY + 5, 0xFFE2E8F0);
+        drawText(graphics, hexText, hexBoxX + (hexBoxW - textW) / 2, hexBoxY + 5, 0xFFE2E8F0);
 
         graphics.fill(barX - 1, hexBoxY, barX + barW + 1, hexBoxY + hexBoxH, 0xFF000000 | currentRgb);
-        renderBorder(graphics, barX - 1, hexBoxY, barX + barW + 1, hexBoxY + hexBoxH, 0xCCFFFFFF);
+        drawRect(graphics, barX - 1, hexBoxY, barX + barW + 1, hexBoxY + hexBoxH, 0xCCFFFFFF);
     }
 
     private void updatePickerFromMouse(double mouseX, double mouseY) {
-        int boxX = (this.width - PICKER_BOX_W) / 2;
-        int boxY = Math.max(START_Y + 118, (this.height - PICKER_BOX_H) / 2);
-        int cx = boxX + 56;
-        int cy = boxY + 64;
+        int boxX = (this.width - PICKER_W) / 2;
+        int boxY = Math.max(START_Y + 112, (this.height - PICKER_H) / 2);
+        int cx = boxX + 55;
+        int cy = boxY + 62;
         int barY = boxY + 20;
-        int barH = 88;
+        int barH = 84;
 
         if (draggingWheel) {
             double dx = mouseX - cx;
             double dy = mouseY - cy;
             double dist = Math.sqrt(dx * dx + dy * dy);
-            this.pickerSat = (float) Math.min(1.0, dist / WHEEL_RADIUS);
+            this.pickerSat = (float) Math.min(1.0, dist / WHEEL_R);
             double angle = Math.atan2(dy, dx);
             this.pickerHue = (float) ((angle / (2.0 * Math.PI)) + 1.0) % 1.0f;
-            applyPickerColor();
+            applyColor();
         } else if (draggingBrightness) {
             float norm = (float) ((mouseY - barY) / (barH - 1));
             this.pickerVal = Math.max(0.0f, Math.min(1.0f, 1.0f - norm));
-            applyPickerColor();
+            applyColor();
         }
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (activeColorTarget != null) {
+        if (activeColorItem != null) {
             return true;
         }
 
         int step = scrollY > 0 ? -1 : (scrollY < 0 ? 1 : 0);
 
-        int idx = 0;
-        for (Map.Entry<String, List<ModuleEntry>> entry : panels.entrySet()) {
+        int colIndex = 0;
+        for (Map.Entry<String, List<MenuItem>> entry : categories.entrySet()) {
             String title = entry.getKey();
-            List<ModuleEntry> items = entry.getValue();
+            List<MenuItem> items = entry.getValue();
 
-            int px = START_X + idx * (PANEL_W + PANEL_GAP) - horizontalScroll;
+            int px = START_X + colIndex * (PANEL_W + PANEL_GAP) - horizontalScroll;
             int py = START_Y;
-            int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
-            int bodyBottom = py + HEADER_H + visibleCount * ROW_H + 2;
+            int visibleRows = Math.min(items.size(), MAX_VISIBLE_ROWS);
+            int bodyBottom = py + HEADER_H + visibleRows * ROW_H + 2;
 
             boolean overPanel = mouseX >= px && mouseX <= px + PANEL_W && mouseY >= py && mouseY <= bodyBottom;
             if (overPanel && step != 0) {
                 int maxScroll = Math.max(0, items.size() - MAX_VISIBLE_ROWS);
-                int current = panelScroll.getOrDefault(title, 0);
-                panelScroll.put(title, Math.max(0, Math.min(maxScroll, current + step)));
+                int cur = categoryScroll.getOrDefault(title, 0);
+                categoryScroll.put(title, Math.max(0, Math.min(maxScroll, cur + step)));
                 return true;
             }
-            idx++;
+            colIndex++;
         }
 
-        int totalWidth = panels.size() * (PANEL_W + PANEL_GAP);
+        int totalWidth = categories.size() * (PANEL_W + PANEL_GAP);
         int maxHoriz = Math.max(0, totalWidth - this.width + START_X * 2);
         int hDelta = (int) Math.round((-scrollY - scrollX) * 24);
         if (hDelta != 0) {
@@ -411,34 +383,33 @@ public class ControlPanelScreen extends Screen {
         double mouseY = extractY(event);
         int button = extractButton(event);
 
-        if (activeColorTarget != null) {
-            int boxX = (this.width - PICKER_BOX_W) / 2;
-            int boxY = Math.max(START_Y + 118, (this.height - PICKER_BOX_H) / 2);
+        if (activeColorItem != null) {
+            int boxX = (this.width - PICKER_W) / 2;
+            int boxY = Math.max(START_Y + 112, (this.height - PICKER_H) / 2);
 
-            boolean insideBox = mouseX >= boxX && mouseX <= boxX + PICKER_BOX_W
-                    && mouseY >= boxY && mouseY <= boxY + PICKER_BOX_H;
-            boolean onCloseBtn = mouseX >= boxX + PICKER_BOX_W - 14 && mouseX <= boxX + PICKER_BOX_W
-                    && mouseY >= boxY && mouseY <= boxY + 14;
+            boolean insideBox = mouseX >= boxX && mouseX <= boxX + PICKER_W
+                    && mouseY >= boxY && mouseY <= boxY + PICKER_H;
+            boolean onClose = mouseX >= boxX + PICKER_W - 14 && mouseX <= boxX + PICKER_W
+                    && mouseY >= boxY && mouseY <= boxY + 13;
 
-            if (!insideBox || onCloseBtn) {
-                activeColorTarget = null;
+            if (!insideBox || onClose) {
+                activeColorItem = null;
                 draggingWheel = false;
                 draggingBrightness = false;
                 return true;
             }
 
-            int cx = boxX + 56;
-            int cy = boxY + 64;
-            double dist = Math.hypot(mouseX - cx, mouseY - cy);
-            if (dist <= WHEEL_RADIUS + 4) {
+            int cx = boxX + 55;
+            int cy = boxY + 62;
+            if (Math.hypot(mouseX - cx, mouseY - cy) <= WHEEL_R + 4) {
                 draggingWheel = true;
                 updatePickerFromMouse(mouseX, mouseY);
                 return true;
             }
 
-            int barX = boxX + 114;
+            int barX = boxX + 112;
             int barY = boxY + 20;
-            if (mouseX >= barX - 6 && mouseX <= barX + 14 && mouseY >= barY - 2 && mouseY <= barY + 90) {
+            if (mouseX >= barX - 6 && mouseX <= barX + 14 && mouseY >= barY - 2 && mouseY <= barY + 86) {
                 draggingBrightness = true;
                 updatePickerFromMouse(mouseX, mouseY);
                 return true;
@@ -447,35 +418,35 @@ public class ControlPanelScreen extends Screen {
             return true;
         }
 
-        int idx = 0;
-        for (Map.Entry<String, List<ModuleEntry>> entry : panels.entrySet()) {
+        int colIndex = 0;
+        for (Map.Entry<String, List<MenuItem>> entry : categories.entrySet()) {
             String title = entry.getKey();
-            List<ModuleEntry> items = entry.getValue();
+            List<MenuItem> items = entry.getValue();
 
-            int px = START_X + idx * (PANEL_W + PANEL_GAP) - horizontalScroll;
+            int px = START_X + colIndex * (PANEL_W + PANEL_GAP) - horizontalScroll;
             int py = START_Y;
-            int visibleCount = Math.min(items.size(), MAX_VISIBLE_ROWS);
+            int visibleRows = Math.min(items.size(), MAX_VISIBLE_ROWS);
             int bodyTop = py + HEADER_H;
-            int scroll = panelScroll.getOrDefault(title, 0);
+            int scroll = categoryScroll.getOrDefault(title, 0);
 
-            for (int r = 0; r < visibleCount; r++) {
-                int itemIndex = r + scroll;
-                if (itemIndex >= items.size()) break;
+            for (int r = 0; r < visibleRows; r++) {
+                int idx = r + scroll;
+                if (idx >= items.size()) break;
 
                 int ry = bodyTop + 1 + r * ROW_H;
                 if (mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H) {
-                    ModuleEntry mod = items.get(itemIndex);
+                    MenuItem item = items.get(idx);
                     if (button == 0) {
-                        mod.setter.accept(!mod.getter.getAsBoolean());
+                        item.setter.accept(!item.getter.getAsBoolean());
                         return true;
-                    } else if (button == 1 && mod.colorGetter != null) {
-                        openColorPicker(mod);
+                    } else if (button == 1 && item.colorGetter != null) {
+                        openColorPicker(item);
                         return true;
                     }
                 }
             }
-            idx++;
+            colIndex++;
         }
 
         return super.mouseClicked(event, doubleClick);
@@ -483,7 +454,7 @@ public class ControlPanelScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        if (activeColorTarget != null && (draggingWheel || draggingBrightness)) {
+        if (activeColorItem != null && (draggingWheel || draggingBrightness)) {
             updatePickerFromMouse(extractX(event), extractY(event));
             return true;
         }
@@ -502,7 +473,7 @@ public class ControlPanelScreen extends Screen {
         return false;
     }
 
-    private void renderBorder(GuiGraphicsExtractor graphics, int x1, int y1, int x2, int y2, int color) {
+    private void drawRect(GuiGraphicsExtractor graphics, int x1, int y1, int x2, int y2, int color) {
         graphics.fill(x1, y1, x2, y1 + 1, color);
         graphics.fill(x1, y2 - 1, x2, y2, color);
         graphics.fill(x1, y1, x1 + 1, y2, color);
@@ -532,20 +503,20 @@ public class ControlPanelScreen extends Screen {
         return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
-    private static final class ModuleEntry {
-        final String name;
+    private static final class MenuItem {
+        final String title;
         final BooleanSupplier getter;
         final Consumer<Boolean> setter;
         final IntSupplier colorGetter;
         final IntConsumer colorSetter;
 
-        ModuleEntry(String name, BooleanSupplier getter, Consumer<Boolean> setter) {
-            this(name, getter, setter, null, null);
+        MenuItem(String title, BooleanSupplier getter, Consumer<Boolean> setter) {
+            this(title, getter, setter, null, null);
         }
 
-        ModuleEntry(String name, BooleanSupplier getter, Consumer<Boolean> setter,
-                    IntSupplier colorGetter, IntConsumer colorSetter) {
-            this.name = name;
+        MenuItem(String title, BooleanSupplier getter, Consumer<Boolean> setter,
+                 IntSupplier colorGetter, IntConsumer colorSetter) {
+            this.title = title;
             this.getter = getter;
             this.setter = setter;
             this.colorGetter = colorGetter;
