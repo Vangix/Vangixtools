@@ -1,7 +1,6 @@
 package com.vangix.tools;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -21,19 +20,20 @@ public class AreaScanCache {
         public final int suspiciousBlocks;
         public final int undergroundCount;
         public final int distinctTypes;
+        public final int avgY;
         public final String summary;
 
-        public ScanResult(int score, int suspiciousBlocks, int undergroundCount, int distinctTypes, String summary) {
+        public ScanResult(int score, int suspiciousBlocks, int undergroundCount, int distinctTypes, int avgY, String summary) {
             this.score = score;
             this.suspiciousBlocks = suspiciousBlocks;
             this.undergroundCount = undergroundCount;
             this.distinctTypes = distinctTypes;
+            this.avgY = avgY;
             this.summary = summary;
         }
     }
 
     private static final Map<Long, ScanResult> CACHE = new HashMap<>();
-    private static final Set<Long> REPORTED = new HashSet<>();
 
     public static int scanRadiusChunks = 5;
     public static int scoreThreshold = 25;
@@ -41,7 +41,6 @@ public class AreaScanCache {
 
     public static void clear() {
         CACHE.clear();
-        REPORTED.clear();
     }
 
     public static Map<Long, ScanResult> getFlaggedChunks() {
@@ -54,14 +53,21 @@ public class AreaScanCache {
         return out;
     }
 
+    public static List<ChunkPos> getFlaggedChunkPositions() {
+        if (!FeatureState.areaScanner) return Collections.emptyList();
+        List<ChunkPos> out = new ArrayList<>();
+        for (Long key : getFlaggedChunks().keySet()) {
+            out.add(new ChunkPos(ChunkPos.getX(key), ChunkPos.getZ(key)));
+        }
+        return out;
+    }
+
     public static void tick(Minecraft mc) {
         if (!FeatureState.areaScanner || mc.level == null || mc.player == null) {
-            REPORTED.clear();
             return;
         }
 
         if (--scanTimer > 0) {
-            reportFlaggedToPlayer(mc);
             return;
         }
         scanTimer = 15;
@@ -80,46 +86,19 @@ public class AreaScanCache {
                 if (!mc.level.hasChunk(cx, cz)) continue;
                 if (!(mc.level.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof LevelChunk chunk)) continue;
 
-                ScanResult res = scanChunk(chunk, cx, cz);
+                ScanResult res = scanChunk(chunk);
                 CACHE.put(key, res);
             }
         }
 
         CACHE.keySet().retainAll(keepKeys);
-        reportFlaggedToPlayer(mc);
     }
 
-    public static void reportFlaggedToPlayer(Minecraft client) {
-        if (!FeatureState.areaScanner || client.player == null) {
-            REPORTED.clear();
-            return;
-        }
-
-        Map<Long, ScanResult> flagged = getFlaggedChunks();
-        REPORTED.retainAll(flagged.keySet());
-
-        for (Map.Entry<Long, ScanResult> entry : flagged.entrySet()) {
-            long key = entry.getKey();
-            if (REPORTED.contains(key)) continue;
-            REPORTED.add(key);
-
-            int cx = ChunkPos.getX(key);
-            int cz = ChunkPos.getZ(key);
-            int bx = cx * 16 + 8;
-            int bz = cz * 16 + 8;
-            ScanResult res = entry.getValue();
-
-            String msg = "[ChunkFinder] Chunk (" + cx + ", " + cz + ") ~X:" + bx + " Z:" + bz
-                    + " | score=" + res.score + " | " + res.summary;
-            System.out.println(msg);
-            client.player.sendSystemMessage(Component.literal(msg));
-        }
-    }
-
-    private static ScanResult scanChunk(LevelChunk chunk, int cx, int cz) {
+    private static ScanResult scanChunk(LevelChunk chunk) {
         int score = 0;
         int suspicious = 0;
         int underground = 0;
+        int ySum = 0;
         Set<String> distinctBlocks = new HashSet<>();
 
         for (BlockEntity be : chunk.getBlockEntities().values()) {
@@ -132,6 +111,7 @@ public class AreaScanCache {
             int weight = blockEntityWeight(be);
             if (weight > 0) {
                 suspicious++;
+                ySum += wy;
                 if (isUnderground) underground++;
                 score += weight + (isUnderground ? 3 : 0);
                 distinctBlocks.add(be.getType().toString());
@@ -157,6 +137,7 @@ public class AreaScanCache {
                             int surfaceY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
                             boolean isUnderground = wy < surfaceY - 3 || wy < 56;
                             suspicious++;
+                            ySum += wy;
                             if (isUnderground) underground++;
                             score += w + (isUnderground ? 3 : 0);
                             distinctBlocks.add(state.getBlock().getDescriptionId());
@@ -167,8 +148,9 @@ public class AreaScanCache {
         }
 
         score += distinctBlocks.size() * 4;
+        int avgY = suspicious > 0 ? Math.round((float) ySum / suspicious) : 64;
         String summary = "UG:" + underground + "/" + suspicious + " types:" + distinctBlocks.size();
-        return new ScanResult(score, suspicious, underground, distinctBlocks.size(), summary);
+        return new ScanResult(score, suspicious, underground, distinctBlocks.size(), avgY, summary);
     }
 
     private static int blockEntityWeight(BlockEntity be) {
