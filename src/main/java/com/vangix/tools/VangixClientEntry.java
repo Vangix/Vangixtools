@@ -7,16 +7,16 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.glfw.GLFW;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 public class VangixClientEntry implements ClientModInitializer {
 
     public static final String MOD_ID = "vangixtools";
     public static KeyMapping OPEN_MENU_KEY;
-    private static boolean prevRShiftDown = false;
 
     @Override
     public void onInitializeClient() {
@@ -30,7 +30,6 @@ public class VangixClientEntry implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) {
-                prevRShiftDown = false;
                 return;
             }
 
@@ -51,32 +50,74 @@ public class VangixClientEntry implements ClientModInitializer {
     }
 
     private static void handleMenuToggle(Minecraft client) {
-        long windowHandle = client.getWindow().handle();
-        boolean rShiftDown = GLFW.glfwGetKey(windowHandle, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
-        boolean justPressed = rShiftDown && !prevRShiftDown;
-        prevRShiftDown = rShiftDown;
+        if (OPEN_MENU_KEY == null) return;
 
-        boolean consumed = false;
-        if (OPEN_MENU_KEY != null) {
-            while (OPEN_MENU_KEY.consumeClick()) {
-                consumed = true;
-            }
+        boolean clicked = false;
+        while (OPEN_MENU_KEY.consumeClick()) {
+            clicked = true;
         }
 
-        if (justPressed || (consumed && !(client.screen instanceof ControlPanelScreen))) {
-            if (client.screen instanceof ControlPanelScreen) {
-                client.setScreen(null);
-            } else if (client.screen == null) {
-                client.setScreen(new ControlPanelScreen());
+        if (!clicked) return;
+
+        Screen current = getCurrentScreenSafe(client);
+        if (current instanceof ControlPanelScreen) {
+            setScreenSafe(client, null);
+        } else if (current == null) {
+            setScreenSafe(client, new ControlPanelScreen());
+        }
+    }
+
+    static Screen getCurrentScreenSafe(Minecraft client) {
+        if (client == null) return null;
+        for (String methodName : new String[]{"getScreen", "screen"}) {
+            try {
+                Method m = client.getClass().getMethod(methodName);
+                Object res = m.invoke(client);
+                if (res instanceof Screen s) return s;
+            } catch (Throwable ignored) {
             }
+        }
+        for (String fieldName : new String[]{"screen", "currentScreen"}) {
+            try {
+                Field f = client.getClass().getField(fieldName);
+                Object res = f.get(client);
+                if (res instanceof Screen s) return s;
+            } catch (Throwable ignored) {
+            }
+            try {
+                Field f = client.getClass().getDeclaredField(fieldName);
+                f.setAccessible(true);
+                Object res = f.get(client);
+                if (res instanceof Screen s) return s;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    static void setScreenSafe(Minecraft client, Screen target) {
+        if (client == null) return;
+        for (String methodName : new String[]{"setScreen", "openScreen"}) {
+            try {
+                Method m = client.getClass().getMethod(methodName, Screen.class);
+                m.invoke(client, target);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            if (client.gui != null) {
+                Method m = client.gui.getClass().getMethod("setScreen", Screen.class);
+                m.invoke(client.gui, target);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
     private static KeyMapping registerKeyMappingSafe(KeyMapping mapping) {
         String[] helperClasses = {
                 "net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper",
-                "net.fabricmc.fabric.api.client.key.mapping.v1.KeyMappingHelper",
-                "net.fabricmc.fabric.api.client.keybinding.v1.KeyMappingHelper"
+                "net.fabricmc.fabric.api.client.key.mapping.v1.KeyMappingHelper"
         };
         String[] methodNames = {"registerKeyBinding", "registerKeyMapping"};
 
