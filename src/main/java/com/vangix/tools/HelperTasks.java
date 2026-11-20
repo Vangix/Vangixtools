@@ -4,7 +4,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.state.BlockState;
@@ -150,6 +149,7 @@ public class HelperTasks {
         guardTimer = nextGuardDelay();
     }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private static boolean trySwapToOffhandViaGameMode(Minecraft client, int invSlot) {
         if (client.gameMode == null || client.player == null) return false;
         try {
@@ -158,8 +158,14 @@ public class HelperTasks {
 
             for (Method m : client.gameMode.getClass().getMethods()) {
                 if (m.getName().equals("handleInventoryMouseClick") && m.getParameterCount() == 5) {
-                    m.invoke(client.gameMode, syncId, containerSlot, 40, ClickType.SWAP, client.player);
-                    return true;
+                    Class<?> clickTypeParam = m.getParameterTypes()[3];
+                    Object swapArg = clickTypeParam.isEnum()
+                            ? Enum.valueOf((Class<Enum>) clickTypeParam, "SWAP")
+                            : null;
+                    if (swapArg != null) {
+                        m.invoke(client.gameMode, syncId, containerSlot, 40, swapArg, client.player);
+                        return true;
+                    }
                 }
             }
         } catch (Throwable ignored) {
