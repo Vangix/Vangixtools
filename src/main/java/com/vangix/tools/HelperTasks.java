@@ -4,12 +4,14 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Random;
 
@@ -44,8 +46,8 @@ public class HelperTasks {
                     previousGamma = gammaOption.get();
                     appliedFullbright = true;
                 }
-                if (gammaOption.get() < 15.0) {
-                    gammaOption.set(15.0);
+                if (gammaOption.get() < 1.0) {
+                    gammaOption.set(1.0);
                 }
             } else {
                 restoreGammaIfNeeded(client);
@@ -125,23 +127,43 @@ public class HelperTasks {
         if (client.player.getOffhandItem().is(Items.TOTEM_OF_UNDYING)) return;
 
         Inventory inv = client.player.getInventory();
-        int targetSlot = -1;
+        int foundSlot = -1;
         for (int i = 0; i < 36; i++) {
             if (inv.getItem(i).is(Items.TOTEM_OF_UNDYING)) {
-                targetSlot = i;
+                foundSlot = i;
                 break;
             }
         }
-        if (targetSlot == -1) return;
+        if (foundSlot == -1) return;
 
-        try {
-            ItemStack currentOffhand = inv.getItem(Inventory.SLOT_OFFHAND);
-            ItemStack totemStack = inv.getItem(targetSlot);
-            inv.setItem(Inventory.SLOT_OFFHAND, totemStack);
-            inv.setItem(targetSlot, currentOffhand);
-        } catch (Throwable ignored) {
+        boolean movedViaPackets = trySwapToOffhandViaGameMode(client, foundSlot);
+        if (!movedViaPackets) {
+            try {
+                ItemStack currentOffhand = inv.getItem(Inventory.SLOT_OFFHAND);
+                ItemStack totemStack = inv.getItem(foundSlot);
+                inv.setItem(Inventory.SLOT_OFFHAND, totemStack);
+                inv.setItem(foundSlot, currentOffhand);
+            } catch (Throwable ignored) {
+            }
         }
 
         guardTimer = nextGuardDelay();
+    }
+
+    private static boolean trySwapToOffhandViaGameMode(Minecraft client, int invSlot) {
+        if (client.gameMode == null || client.player == null) return false;
+        try {
+            int containerSlot = invSlot < 9 ? invSlot + 36 : invSlot;
+            int syncId = client.player.inventoryMenu.containerId;
+
+            for (Method m : client.gameMode.getClass().getMethods()) {
+                if (m.getName().equals("handleInventoryMouseClick") && m.getParameterCount() == 5) {
+                    m.invoke(client.gameMode, syncId, containerSlot, 40, ClickType.SWAP, client.player);
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 }
