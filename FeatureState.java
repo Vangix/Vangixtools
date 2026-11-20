@@ -17,11 +17,15 @@ public class FeatureState {
     public static boolean showEntityTag = true;
     public static boolean showEntityGear = true;
 
-    public static boolean filterContainers = true;
-    public static boolean filterShulkers = true;
-    public static boolean filterLogicBlocks = true;
-    public static boolean filterSpawners = true;
-    public static boolean filterVaultBlocks = true;
+    public static boolean filterStorage = true;
+    public static boolean filterDiamondBlocks = true;
+    public static boolean filterNetheriteBlocks = true;
+    public static boolean filterEmeraldBlocks = true;
+    public static boolean filterRedstoneBlocks = true;
+    public static boolean filterGildedBlackstone = true;
+    public static boolean filterCustomSpawners = true;
+
+    public static boolean tracerBlocks = true;
 
     public static int minGuardDelay = 2;
     public static int maxGuardDelay = 5;
