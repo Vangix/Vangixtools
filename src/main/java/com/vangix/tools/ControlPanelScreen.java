@@ -28,6 +28,9 @@ public class ControlPanelScreen extends Screen {
     private static final int START_X = 8;
     private static final int START_Y = 8;
 
+    // Ширина зоны стрелочки справа в строке модуля
+    private static final int ARROW_HIT_W = 14;
+
     private static final int PANEL_BG = 0xD8141820;
     private static final int HEADER_BG = 0xE6222938;
     private static final int HEADER_ACCENT = 0xFF5B7CFA;
@@ -37,6 +40,7 @@ public class ControlPanelScreen extends Screen {
     private static final int INACTIVE_TEXT = 0xFFD8DEE9;
     private static final int SUB_BG = 0xCC1B202C;
     private static final int BORDER_COL = 0xAA2E3648;
+    private static final int ARROW_COLOR = 0xFF9BB8FF;
     private static final int MUTED_HINT = 0xFF8892A6;
 
     private final Map<String, List<ModuleNode>> panels = new LinkedHashMap<>();
@@ -226,6 +230,27 @@ public class ControlPanelScreen extends Screen {
         graphics.text(this.font, Component.literal(text), x, y, color);
     }
 
+    private void drawArrowIcon(GuiGraphicsExtractor graphics, int px, int ry, boolean open, int color) {
+        // Чуть более крупная и читаемая стрелочка справа в строке
+        int arrowX = px + PANEL_W - 10;
+        int midY = ry + ROW_H / 2;
+        if (open) {
+            // Стрелочка вниз (⌄)
+            graphics.fill(arrowX - 2, midY - 1, arrowX - 1, midY, color);
+            graphics.fill(arrowX - 1, midY, arrowX, midY + 1, color);
+            graphics.fill(arrowX, midY + 1, arrowX + 1, midY + 2, color);
+            graphics.fill(arrowX + 1, midY, arrowX + 2, midY + 1, color);
+            graphics.fill(arrowX + 2, midY - 1, arrowX + 3, midY, color);
+        } else {
+            // Стрелочка вправо (›)
+            graphics.fill(arrowX - 1, midY - 2, arrowX, midY - 1, color);
+            graphics.fill(arrowX, midY - 1, arrowX + 1, midY, color);
+            graphics.fill(arrowX + 1, midY, arrowX + 2, midY + 1, color);
+            graphics.fill(arrowX, midY + 1, arrowX + 1, midY + 2, color);
+            graphics.fill(arrowX - 1, midY + 2, arrowX, midY + 3, color);
+        }
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         updateAnimations();
@@ -309,7 +334,7 @@ public class ControlPanelScreen extends Screen {
 
                 if (!node.subSettings.isEmpty()) {
                     boolean open = expandedNode == node;
-                    drawText(graphics, open ? "▾" : "▸", px + PANEL_W - 9, ry + 2, scaleAlpha(MUTED_HINT, easedScreen));
+                    drawArrowIcon(graphics, px, ry, open, scaleAlpha(open ? ACTIVE_TEXT : ARROW_COLOR, easedScreen));
                 }
 
                 curY += ROW_H;
@@ -586,14 +611,19 @@ public class ControlPanelScreen extends Screen {
                 if (mouseX >= px + 1 && mouseX <= px + PANEL_W - 1
                         && mouseY >= ry && mouseY < ry + ROW_H) {
 
-                    if (button == 1) {
+                    boolean hitArrow = !node.subSettings.isEmpty()
+                            && mouseX >= px + PANEL_W - ARROW_HIT_W
+                            && mouseX <= px + PANEL_W - 1;
+
+                    // Нажатие по стрелочке (или ПКМ) открывает/закрывает доп. настройки
+                    if (hitArrow || button == 1) {
                         if (!node.subSettings.isEmpty()) {
                             expandedNode = (expandedNode == node) ? null : node;
-                            return true;
                         }
                         return true;
                     }
 
+                    // Нажатие по тексту / остальной части строки включает/выключает функцию
                     if (button == 0) {
                         node.setter.accept(!node.getter.getAsBoolean());
                         return true;
