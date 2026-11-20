@@ -4,36 +4,39 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
+import net.minecraft.client.KeyMapping;
 import org.lwjgl.glfw.GLFW;
 
 public class VangixClientEntry implements ClientModInitializer {
 
-    private static KeyBinding menuBind;
+    public static final String MOD_ID = "vangixtools";
+    public static KeyMapping OPEN_MENU_KEY;
 
     @Override
     public void onInitializeClient() {
-        menuBind = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.vangixs_tools.panel",
-                InputUtil.Type.KEYSYM,
+        OPEN_MENU_KEY = KeyBindingHelper.registerKeyBinding(new KeyMapping(
+                "key.vangixtools.open_menu",
                 GLFW.GLFW_KEY_RIGHT_SHIFT,
-                "category.vangixs_tools"
+                KeyMapping.Category.MISC
         ));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            while (menuBind.wasPressed()) {
-                if (client.currentScreen == null) {
-                    client.setScreen(new ControlPanelScreen());
-                } else if (client.currentScreen instanceof ControlPanelScreen) {
+            if (client.player == null) return;
+
+            while (OPEN_MENU_KEY.consumeClick()) {
+                if (client.screen instanceof ControlPanelScreen) {
                     client.setScreen(null);
+                } else {
+                    client.setScreen(new ControlPanelScreen());
                 }
             }
+
             HelperTasks.tick(client);
+            WorldOverlayRenderer.collectTargets(client);
         });
 
-        WorldRenderEvents.AFTER_TRANSLUCENT.register(WorldOverlayRenderer::render);
-        HudRenderCallback.EVENT.register(HelperTasks::renderOverlay);
+        HudRenderCallback.EVENT.register((context, tickDelta) ->
+                HelperTasks.renderOverlay(context, tickDelta.getGameTimeDeltaPartialTick(true))
+        );
     }
 }
