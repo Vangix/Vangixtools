@@ -1,174 +1,197 @@
 package com.vangix.tools;
 
-import net.minecraft.block.*;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.chunk.ChunkSection;
-import net.minecraft.world.chunk.ChunkStatus;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.levelgen.Heightmap;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 public class AreaScanCache {
 
-    public static class ScanResult {
+    public static final class ScanResult {
         public final int score;
+        public final int suspiciousBlocks;
+        public final int undergroundCount;
+        public final int distinctTypes;
         public final String summary;
 
-        public ScanResult(int score, String summary) {
+        public ScanResult(int score, int suspiciousBlocks, int undergroundCount, int distinctTypes, String summary) {
             this.score = score;
+            this.suspiciousBlocks = suspiciousBlocks;
+            this.undergroundCount = undergroundCount;
+            this.distinctTypes = distinctTypes;
             this.summary = summary;
         }
     }
 
-    private static final Map<Long, ScanResult> ENTRIES = new HashMap<>();
-    private static int scanTimer = 0;
+    private static final Map<Long, ScanResult> CACHE = new HashMap<>();
+    private static final Set<Long> REPORTED = new HashSet<>();
+
+    public static int scanRadiusChunks = 5;
     public static int scoreThreshold = 25;
+    private static int scanTimer = 0;
 
-    public static void tick(MinecraftClient client) {
-        if (!FeatureState.areaScanner || client.world == null || client.player == null) {
-            return;
-        }
-
-        if (scanTimer > 0) {
-            scanTimer--;
-            return;
-        }
-        scanTimer = 15;
-
-        int radius = 5;
-        ChunkPos center = client.player.getChunkPos();
-        Set<Long> seen = new HashSet<>();
-
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
-                int cx = center.x + dx;
-                int cz = center.z + dz;
-                if (!client.world.getChunkManager().isChunkLoaded(cx, cz)) continue;
-                if (!(client.world.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof WorldChunk chunk)) continue;
-
-                long key = ChunkPos.toLong(cx, cz);
-                seen.add(key);
-
-                if (!chunk.isEmpty()) {
-                    ENTRIES.put(key, evaluateChunk(chunk));
-                }
-            }
-        }
-
-        ENTRIES.keySet().removeIf(k -> !seen.contains(k));
+    public static void clear() {
+        CACHE.clear();
+        REPORTED.clear();
     }
 
     public static Map<Long, ScanResult> getFlaggedChunks() {
-        Map<Long, ScanResult> out = new HashMap<>();
-        for (Map.Entry<Long, ScanResult> entry : ENTRIES.entrySet()) {
-            if (entry.getValue().score >= scoreThreshold) {
-                out.put(entry.getKey(), entry.getValue());
+        Map<Long, ScanResult> out = new LinkedHashMap<>();
+        for (Map.Entry<Long, ScanResult> e : CACHE.entrySet()) {
+            if (e.getValue().score >= scoreThreshold) {
+                out.put(e.getKey(), e.getValue());
             }
         }
         return out;
     }
 
-    private static ScanResult evaluateChunk(WorldChunk chunk) {
-        int blockScore = 0;
-        int terrainScore = 0;
+    public static void tick(Minecraft mc) {
+        if (!FeatureState.areaScanner || mc.level == null || mc.player == null) {
+            REPORTED.clear();
+            return;
+        }
 
-        Set<Block> distinctBlocks = new HashSet<>();
-        int matchedCount = 0;
+        if (--scanTimer > 0) {
+            reportFlaggedToPlayer(mc);
+            return;
+        }
+        scanTimer = 15;
 
-        ChunkSection[] sections = chunk.getSectionArray();
-        for (ChunkSection section : sections) {
-            if (section == null || section.isEmpty()) continue;
+        int centerX = mc.player.chunkPosition().x();
+        int centerZ = mc.player.chunkPosition().z();
+        Set<Long> keepKeys = new HashSet<>();
+
+        for (int dx = -scanRadiusChunks; dx <= scanRadiusChunks; dx++) {
+            for (int dz = -scanRadiusChunks; dz <= scanRadiusChunks; dz++) {
+                int cx = centerX + dx;
+                int cz = centerZ + dz;
+                long key = ChunkPos.asLong(cx, cz);
+                keepKeys.add(key);
+
+                if (!mc.level.hasChunk(cx, cz)) continue;
+                if (!(mc.level.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof LevelChunk chunk)) continue;
+
+                ScanResult res = scanChunk(chunk, cx, cz);
+                CACHE.put(key, res);
+            }
+        }
+
+        CACHE.keySet().retainAll(keepKeys);
+        reportFlaggedToPlayer(mc);
+    }
+
+    public static void reportFlaggedToPlayer(Minecraft client) {
+        if (!FeatureState.areaScanner || client.player == null) {
+            REPORTED.clear();
+            return;
+        }
+
+        Map<Long, ScanResult> flagged = getFlaggedChunks();
+        REPORTED.retainAll(flagged.keySet());
+
+        for (Map.Entry<Long, ScanResult> entry : flagged.entrySet()) {
+            long key = entry.getKey();
+            if (REPORTED.contains(key)) continue;
+            REPORTED.add(key);
+
+            int cx = ChunkPos.getX(key);
+            int cz = ChunkPos.getZ(key);
+            int bx = cx * 16 + 8;
+            int bz = cz * 16 + 8;
+            ScanResult res = entry.getValue();
+
+            String msg = "[ChunkFinder] Chunk (" + cx + ", " + cz + ") ~X:" + bx + " Z:" + bz
+                    + " | score=" + res.score + " | " + res.summary;
+            System.out.println(msg);
+            client.player.displayClientMessage(Component.literal(msg), false);
+        }
+    }
+
+    private static ScanResult scanChunk(LevelChunk chunk, int cx, int cz) {
+        int score = 0;
+        int suspicious = 0;
+        int underground = 0;
+        Set<String> distinctBlocks = new HashSet<>();
+
+        for (BlockEntity be : chunk.getBlockEntities().values()) {
+            int wy = be.getBlockPos().getY();
+            int surfaceY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE,
+                    Math.floorMod(be.getBlockPos().getX(), 16),
+                    Math.floorMod(be.getBlockPos().getZ(), 16));
+            boolean isUnderground = wy < surfaceY - 3 || wy < 56;
+
+            int weight = blockEntityWeight(be);
+            if (weight > 0) {
+                suspicious++;
+                if (isUnderground) underground++;
+                score += weight + (isUnderground ? 3 : 0);
+                distinctBlocks.add(be.getType().toString());
+            }
+        }
+
+        int minWorldY = chunk.getMinY();
+        LevelChunkSection[] sections = chunk.getSections();
+        int baseX = cx * 16;
+        int baseZ = cz * 16;
+
+        for (int sIdx = 0; sIdx < sections.length; sIdx++) {
+            LevelChunkSection section = sections[sIdx];
+            if (section == null || section.hasOnlyAir()) continue;
+            int secBottomY = minWorldY + sIdx * 16;
 
             for (int x = 0; x < 16; x++) {
                 for (int y = 0; y < 16; y++) {
+                    int wy = secBottomY + y;
                     for (int z = 0; z < 16; z++) {
                         BlockState state = section.getBlockState(x, y, z);
                         if (state.isAir()) continue;
-                        Block block = state.getBlock();
-
-                        if (isNotableBlock(block)) {
-                            matchedCount++;
-                            distinctBlocks.add(block);
+                        int w = blockStateWeight(state.getBlock());
+                        if (w > 0) {
+                            int surfaceY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x, z);
+                            boolean isUnderground = wy < surfaceY - 3 || wy < 56;
+                            suspicious++;
+                            if (isUnderground) underground++;
+                            score += w + (isUnderground ? 3 : 0);
+                            distinctBlocks.add(state.getBlock().getDescriptionId());
                         }
                     }
                 }
             }
         }
 
-        blockScore += matchedCount * 2;
-        blockScore += distinctBlocks.size() * 4;
-
-        int minH = Integer.MAX_VALUE;
-        int maxH = Integer.MIN_VALUE;
-        int abruptSteps = 0;
-
-        int[][] heights = new int[16][16];
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                int h = chunk.getHeightmap(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES).get(x, z);
-                heights[x][z] = h;
-                if (h < minH) minH = h;
-                if (h > maxH) maxH = h;
-            }
-        }
-
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                int h = heights[x][z];
-                if (x + 1 < 16 && Math.abs(h - heights[x + 1][z]) >= 8) {
-                    abruptSteps++;
-                }
-                if (z + 1 < 16 && Math.abs(h - heights[x][z + 1]) >= 8) {
-                    abruptSteps++;
-                }
-            }
-        }
-
-        if (maxH - minH >= 24 && abruptSteps >= 12) {
-            terrainScore += 15;
-        } else if (abruptSteps >= 20) {
-            terrainScore += 10;
-        }
-
-        int total = blockScore + terrainScore;
-        String summary = "Blocks: " + matchedCount
-                + " (types: " + distinctBlocks.size() + ")"
-                + (terrainScore > 0 ? ", Terrain+" + terrainScore : "");
-
-        return new ScanResult(total, summary);
+        score += distinctBlocks.size() * 4;
+        String summary = "UG:" + underground + "/" + suspicious + " types:" + distinctBlocks.size();
+        return new ScanResult(score, suspicious, underground, distinctBlocks.size(), summary);
     }
 
-    private static boolean isNotableBlock(Block block) {
-        return block instanceof ChestBlock
-                || block instanceof BarrelBlock
-                || block instanceof ShulkerBoxBlock
-                || block instanceof EnderChestBlock
-                || block instanceof AbstractFurnaceBlock
-                || block instanceof CraftingTableBlock
-                || block instanceof AnvilBlock
-                || block instanceof EnchantingTableBlock
-                || block instanceof BeaconBlock
-                || block instanceof BrewingStandBlock
-                || block instanceof BedBlock
-                || block instanceof CarpetBlock
-                || block instanceof AbstractGlassBlock
-                || block instanceof TorchBlock
-                || block instanceof WallTorchBlock
-                || block instanceof LanternBlock
-                || block instanceof CommandBlock
-                || block instanceof StructureBlock
-                || block instanceof HopperBlock
-                || block instanceof DispenserBlock
-                || block instanceof DropperBlock
-                || block instanceof RedstoneWireBlock
-                || block instanceof RepeaterBlock
-                || block instanceof ComparatorBlock
-                || block instanceof ObserverBlock
-                || block instanceof PistonBlock;
+    private static int blockEntityWeight(BlockEntity be) {
+        String name = be.getClass().getSimpleName().toLowerCase(Locale.ROOT);
+        if (name.contains("shulker")) return 12;
+        if (name.contains("chest") || name.contains("barrel")) return 6;
+        if (name.contains("furnace") || name.contains("hopper") || name.contains("brewing") || name.contains("beacon")) return 5;
+        if (name.contains("spawner") || name.contains("trial")) return 8;
+        return 0;
+    }
+
+    private static int blockStateWeight(Block block) {
+        if (block == Blocks.CRAFTING_TABLE || block == Blocks.ANVIL || block == Blocks.CHIPPED_ANVIL || block == Blocks.DAMAGED_ANVIL) {
+            return 4;
+        }
+        if (block == Blocks.OBSERVER || block == Blocks.PISTON || block == Blocks.STICKY_PISTON || block == Blocks.REDSTONE_BLOCK) {
+            return 4;
+        }
+        if (block == Blocks.DIAMOND_BLOCK || block == Blocks.NETHERITE_BLOCK || block == Blocks.EMERALD_BLOCK) {
+            return 7;
+        }
+        return 0;
     }
 }
