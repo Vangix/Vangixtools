@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "vangixtools",
+  "version": "${version}",
+  "name": "Vangix's Tools",
+  "description": "Utility & visual toolkit for Minecraft 26.3",
+  "authors": [
+    "Vangix"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.vangix.tools.VangixClientEntry"
+    ]
+  },
+  "mixins": [],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~26.3",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
