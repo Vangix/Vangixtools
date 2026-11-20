@@ -20,9 +20,7 @@ public final class ChunkBaseFinder {
     private static final List<SuspiciousChunk> FOUND_CHUNKS = new ArrayList<>();
     private static long lastScanTick = -20L;
 
-    // Порог очков, начиная с которого чанк считается похожим на базу/постройку
     private static final int BASE_SCORE_THRESHOLD = 6;
-    // Радиус чанков вокруг игрока
     private static final int CHUNK_RADIUS = 4;
 
     private ChunkBaseFinder() {}
@@ -38,7 +36,6 @@ public final class ChunkBaseFinder {
         }
 
         long gameTime = mc.level.getGameTime();
-        // Сканируем каждые 15 тиков (~0.75 сек), чтобы не просаживать FPS и не спамить в чат
         if (gameTime - lastScanTick < 15L) {
             return;
         }
@@ -81,7 +78,6 @@ public final class ChunkBaseFinder {
 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
-        // Шаг 2 по X и Z для быстрого сканирования без фризов
         for (int y = minY; y <= maxY; y += 2) {
             for (int x = startX; x <= startX + 15; x += 2) {
                 for (int z = startZ; z <= startZ + 15; z += 2) {
