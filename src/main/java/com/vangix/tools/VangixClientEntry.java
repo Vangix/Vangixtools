@@ -18,6 +18,7 @@ import org.joml.Matrix4f;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.StringJoiner;
 
 public class VangixClientEntry implements ClientModInitializer {
 
@@ -26,6 +27,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static long lastOverlayFrameId = -1L;
     private static boolean loggedRenderDebug = false;
+    private static boolean loggedGizmoMethods = false;
 
     @Override
     public void onInitializeClient() {
@@ -83,13 +85,26 @@ public class VangixClientEntry implements ClientModInitializer {
                     + ", players=" + WorldOverlayRenderer.getPlayerTargets().size());
         }
 
-        // Основной путь для MC 26.3: рисуем через Gizmo-коллектор (линии и рамки/боксы)
+        if (gizmoCollector != null && !loggedGizmoMethods) {
+            loggedGizmoMethods = true;
+            StringJoiner sj = new StringJoiner(", ");
+            for (Method m : gizmoCollector.getClass().getMethods()) {
+                if (m.getDeclaringClass() != Object.class) {
+                    StringJoiner p = new StringJoiner(", ");
+                    for (Class<?> c : m.getParameterTypes()) {
+                        p.add(c.getSimpleName());
+                    }
+                    sj.add(m.getReturnType().getSimpleName() + " " + m.getName() + "(" + p + ")");
+                }
+            }
+            System.out.println("[VangixTools] SimpleGizmoCollector methods: " + sj);
+        }
+
         if (gizmoCollector != null) {
             renderWithGizmos(mc, gizmoCollector);
             return;
         }
 
-        // Запасной путь, если bufferSource и слои доступны
         if (bufferSource != null && (quadLayer != null || lineLayer != null)) {
             PoseStack poseStack = new PoseStack();
             poseStack.pushPose();
@@ -151,7 +166,6 @@ public class VangixClientEntry implements ClientModInitializer {
     }
 
     private static void renderWithGizmos(Minecraft mc, Object gizmoCollector) {
-        // 1) Chunk Finder — контур чанка 16x16
         if (FeatureState.areaScanner) {
             for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
                 int argb = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.65f, ct.lineAlpha()));
@@ -163,7 +177,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 2) Block ESP — 3D-рамка блока
         if (FeatureState.containerSight) {
             for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
                 BlockPos p = box.pos();
@@ -173,7 +186,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 3) Tracers — линии от взгляда до целей
         if (FeatureState.lineGuides && mc.player != null) {
             Vec3 eyePos = mc.player.getEyePosition(1.0f).subtract(0.0, 0.12, 0.0);
 
