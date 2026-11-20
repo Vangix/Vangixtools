@@ -11,12 +11,13 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.gizmos.Gizmo;
+import net.minecraft.gizmos.LineGizmo;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.StringJoiner;
@@ -29,7 +30,6 @@ public class VangixClientEntry implements ClientModInitializer {
     private static long lastOverlayFrameId = -1L;
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
-    private static boolean dumpedGizmoClasses = false;
 
     @Override
     public void onInitializeClient() {
@@ -100,11 +100,6 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
             System.out.println("[VangixTools] SimpleGizmoCollector methods: " + sj);
-        }
-
-        if (!dumpedGizmoClasses) {
-            dumpedGizmoClasses = true;
-            dumpGizmoPackageClasses();
         }
 
         if (gizmoCollector != null) {
@@ -240,26 +235,18 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static void gizmoLine(Object collector, Vec3 from, Vec3 to, int argb, float width) {
         if (collector == null) return;
-        for (Method m : collector.getClass().getMethods()) {
-            String name = m.getName().toLowerCase();
-            if (!name.contains("line")) continue;
-            Class<?>[] params = m.getParameterTypes();
-
-            try {
-                if (params.length == 3 && params[0] == Vec3.class && params[1] == Vec3.class && params[2] == int.class) {
-                    m.invoke(collector, from, to, argb);
-                    return;
+        try {
+            Gizmo line = new LineGizmo(from, to, argb, width);
+            Method addMethod = collector.getClass().getMethod("add", Gizmo.class);
+            Object props = addMethod.invoke(collector, line);
+            if (props != null) {
+                try {
+                    Method alwaysOnTop = props.getClass().getMethod("setAlwaysOnTop");
+                    alwaysOnTop.invoke(props);
+                } catch (Throwable ignored) {
                 }
-                if (params.length == 4 && params[0] == Vec3.class && params[1] == Vec3.class && params[2] == int.class && params[3] == float.class) {
-                    m.invoke(collector, from, to, argb, width);
-                    return;
-                }
-                if (params.length == 4 && params[0] == Vec3.class && params[1] == Vec3.class && params[2] == float.class && params[3] == int.class) {
-                    m.invoke(collector, from, to, width, argb);
-                    return;
-                }
-            } catch (Throwable ignored) {
             }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -615,55 +602,5 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
         return mapping;
-    }
-
-    private static void dumpGizmoPackageClasses() {
-        String[] candidates = {
-                "net.minecraft.gizmos.Gizmos",
-                "net.minecraft.gizmos.Gizmo",
-                "net.minecraft.gizmos.GizmoProperties",
-                "net.minecraft.gizmos.SimpleGizmoCollector",
-                "net.minecraft.gizmos.LineGizmo",
-                "net.minecraft.gizmos.BoxGizmo",
-                "net.minecraft.gizmos.CubeGizmo",
-                "net.minecraft.gizmos.CuboidGizmo",
-                "net.minecraft.gizmos.QuadGizmo",
-                "net.minecraft.gizmos.PolygonGizmo",
-                "net.minecraft.gizmos.PointGizmo",
-                "net.minecraft.gizmos.TextGizmo"
-        };
-
-        for (String className : candidates) {
-            try {
-                Class<?> clazz = Class.forName(className);
-                StringJoiner entries = new StringJoiner(", ");
-
-                for (Constructor<?> ctor : clazz.getConstructors()) {
-                    entries.add("new " + clazz.getSimpleName() + formatParams(ctor.getParameterTypes()));
-                }
-
-                for (Method method : clazz.getMethods()) {
-                    if (method.getDeclaringClass() != Object.class) {
-                        entries.add(
-                                method.getReturnType().getSimpleName()
-                                        + " "
-                                        + method.getName()
-                                        + formatParams(method.getParameterTypes())
-                        );
-                    }
-                }
-
-                System.out.println("[VangixTools][GizmoDump] " + className + " -> " + entries);
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    private static String formatParams(Class<?>[] params) {
-        StringJoiner joiner = new StringJoiner(", ", "(", ")");
-        for (Class<?> param : params) {
-            joiner.add(param.getSimpleName());
-        }
-        return joiner.toString();
     }
 }
