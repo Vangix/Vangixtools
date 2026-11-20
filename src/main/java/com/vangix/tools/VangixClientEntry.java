@@ -401,4 +401,97 @@ public class VangixClientEntry implements ClientModInitializer {
         if (vc == null) return;
         Matrix4f mat = poseStack.last().pose();
         vc.addVertex(mat, (float) from.x, (float) from.y, (float) from.z).setColor(r, g, b, a);
-        vc.addVertex(mat, (float) to.x, (float) to.y, (float) to.z).setColor(r, g, b, a
+        vc.addVertex(mat, (float) to.x, (float) to.y, (float) to.z).setColor(r, g, b, a);
+    }
+
+    private static void handleMenuToggle(Minecraft client) {
+        if (OPEN_MENU_KEY == null) return;
+
+        boolean clicked = false;
+        while (OPEN_MENU_KEY.consumeClick()) {
+            clicked = true;
+        }
+
+        if (!clicked) return;
+
+        Screen current = getCurrentScreenSafe(client);
+        if (current instanceof ControlPanelScreen) {
+            setScreenSafe(client, null);
+        } else if (current == null) {
+            setScreenSafe(client, new ControlPanelScreen());
+        }
+    }
+
+    static Screen getCurrentScreenSafe(Minecraft client) {
+        if (client == null) return null;
+        for (String methodName : new String[]{"getScreen", "screen"}) {
+            try {
+                Method m = client.getClass().getMethod(methodName);
+                Object res = m.invoke(client);
+                if (res instanceof Screen s) return s;
+            } catch (Throwable ignored) {
+            }
+        }
+        for (String fieldName : new String[]{"screen", "currentScreen"}) {
+            try {
+                Field f = client.getClass().getField(fieldName);
+                Object res = f.get(client);
+                if (res instanceof Screen s) return s;
+            } catch (Throwable ignored) {
+            }
+            try {
+                Field f = client.getClass().getDeclaredField(fieldName);
+                f.setAccessible(true);
+                Object res = f.get(client);
+                if (res instanceof Screen s) return s;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    static void setScreenSafe(Minecraft client, Screen target) {
+        if (client == null) return;
+        for (String methodName : new String[]{"setScreen", "openScreen"}) {
+            try {
+                Method m = client.getClass().getMethod(methodName, Screen.class);
+                m.invoke(client, target);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            if (client.gui != null) {
+                Method m = client.gui.getClass().getMethod("setScreen", Screen.class);
+                m.invoke(client.gui, target);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static KeyMapping registerKeyMappingSafe(KeyMapping mapping) {
+        String[] helperClasses = {
+                "net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper",
+                "net.fabricmc.fabric.api.client.key.mapping.v1.KeyMappingHelper"
+        };
+        String[] methodNames = {"registerKeyBinding", "registerKeyMapping"};
+
+        for (String className : helperClasses) {
+            try {
+                Class<?> clazz = Class.forName(className);
+                for (String methodName : methodNames) {
+                    try {
+                        Method m = clazz.getMethod(methodName, KeyMapping.class);
+                        Object res = m.invoke(null, mapping);
+                        if (res instanceof KeyMapping km) {
+                            return km;
+                        }
+                    } catch (NoSuchMethodException ignored) {
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return mapping;
+    }
+}
