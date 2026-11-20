@@ -1,10 +1,12 @@
 package com.vangix.tools;
 
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.awt.Color;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -171,8 +173,12 @@ public class ControlPanelScreen extends Screen {
         panelScroll.putIfAbsent(title, 0);
     }
 
+    private void drawLabel(GuiGraphicsExtractor graphics, String text, int x, int y, int color) {
+        graphics.text(this.font, Component.literal(text), x, y, color);
+    }
+
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void render(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         int headerBg = (FeatureState.accentColor & 0x00FFFFFF) | 0xD9000000;
         int activeText = lightenColor(FeatureState.accentColor, 0.35f);
 
@@ -191,7 +197,7 @@ public class ControlPanelScreen extends Screen {
             panelScroll.put(title, scroll);
 
             graphics.fill(px, py, px + PANEL_W, py + HEADER_H, headerBg);
-            graphics.drawString(this.font, title, px + 4, py + 3, HEADER_TEXT, false);
+            drawLabel(graphics, title, px + 4, py + 3, HEADER_TEXT);
 
             int bodyTop = py + HEADER_H;
             int bodyBottom = bodyTop + bodyH;
@@ -214,7 +220,7 @@ public class ControlPanelScreen extends Screen {
                 boolean enabled = mod.getter.getAsBoolean();
                 int textColor = enabled ? activeText : INACTIVE_TEXT;
                 String label = enabled ? "▸ " + mod.name : mod.name;
-                graphics.drawString(this.font, label, px + 4, ry + 2, textColor, false);
+                drawLabel(graphics, label, px + 4, ry + 2, textColor);
 
                 if (mod.colorGetter != null) {
                     int swX = px + PANEL_W - 12;
@@ -243,15 +249,15 @@ public class ControlPanelScreen extends Screen {
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
-    private void renderColorPickerModal(GuiGraphics graphics) {
+    private void renderColorPickerModal(GuiGraphicsExtractor graphics) {
         int boxX = (this.width - PICKER_BOX_W) / 2;
         int boxY = Math.max(START_Y + 118, (this.height - PICKER_BOX_H) / 2);
 
         graphics.fill(boxX, boxY, boxX + PICKER_BOX_W, boxY + PICKER_BOX_H, 0xF02B2D31);
         int headerBg = (FeatureState.accentColor & 0x00FFFFFF) | 0xE6000000;
         graphics.fill(boxX, boxY, boxX + PICKER_BOX_W, boxY + 14, headerBg);
-        graphics.drawString(this.font, activeColorTarget.name + " Color", boxX + 5, boxY + 3, 0xFFFFFFFF, false);
-        graphics.drawString(this.font, "✕", boxX + PICKER_BOX_W - 10, boxY + 3, 0xFFFFFFFF, false);
+        drawLabel(graphics, activeColorTarget.name + " Color", boxX + 5, boxY + 3, 0xFFFFFFFF);
+        drawLabel(graphics, "✕", boxX + PICKER_BOX_W - 10, boxY + 3, 0xFFFFFFFF);
         renderBorder(graphics, boxX, boxY, boxX + PICKER_BOX_W, boxY + PICKER_BOX_H, 0xCC4A4F5A);
 
         int cx = boxX + 56;
@@ -300,7 +306,7 @@ public class ControlPanelScreen extends Screen {
         int currentRgb = Color.HSBtoRGB(pickerHue, pickerSat, pickerVal) & 0x00FFFFFF;
         String hexText = String.format("#%06x", currentRgb);
         int textW = this.font.width(hexText);
-        graphics.drawString(this.font, hexText, hexBoxX + (hexBoxW - textW) / 2, hexBoxY + 5, 0xFFE2E8F0, false);
+        drawLabel(graphics, hexText, hexBoxX + (hexBoxW - textW) / 2, hexBoxY + 5, 0xFFE2E8F0);
 
         graphics.fill(barX - 1, hexBoxY, barX + barW + 1, hexBoxY + hexBoxH, 0xFF000000 | currentRgb);
         renderBorder(graphics, barX - 1, hexBoxY, barX + barW + 1, hexBoxY + hexBoxH, 0xCCFFFFFF);
@@ -368,8 +374,45 @@ public class ControlPanelScreen extends Screen {
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
+    private double extractX(MouseButtonEvent event) {
+        Object v = invokeNoArg(event, "x", "getX");
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    private double extractY(MouseButtonEvent event) {
+        Object v = invokeNoArg(event, "y", "getY");
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    private int extractButton(MouseButtonEvent event) {
+        Object v = invokeNoArg(event, "button", "getButton", "buttonCode");
+        if (v instanceof Number n) return n.intValue();
+        Object info = invokeNoArg(event, "buttonInfo", "getButtonInfo");
+        if (info != null) {
+            Object b = invokeNoArg(info, "button", "getButton", "code");
+            if (b instanceof Number n) return n.intValue();
+        }
+        return 0;
+    }
+
+    private Object invokeNoArg(Object target, String... names) {
+        if (target == null) return null;
+        for (String name : names) {
+            try {
+                Method m = target.getClass().getMethod(name);
+                return m.invoke(target);
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mouseX = extractX(event);
+        double mouseY = extractY(event);
+        int button = extractButton(event);
+
         if (activeColorTarget != null) {
             int boxX = (this.width - PICKER_BOX_W) / 2;
             int boxY = Math.max(START_Y + 118, (this.height - PICKER_BOX_H) / 2);
@@ -437,23 +480,23 @@ public class ControlPanelScreen extends Screen {
             idx++;
         }
 
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         if (activeColorTarget != null && (draggingWheel || draggingBrightness)) {
-            updatePickerFromMouse(mouseX, mouseY);
+            updatePickerFromMouse(extractX(event), extractY(event));
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+        return super.mouseDragged(event, dragX, dragY);
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
         draggingWheel = false;
         draggingBrightness = false;
-        return super.mouseReleased(mouseX, mouseY, button);
+        return super.mouseReleased(event);
     }
 
     @Override
@@ -461,21 +504,21 @@ public class ControlPanelScreen extends Screen {
         return false;
     }
 
-    private void renderBorder(GuiGraphics graphics, int x1, int y1, int x2, int y2, int color) {
+    private void renderBorder(GuiGraphicsExtractor graphics, int x1, int y1, int x2, int y2, int color) {
         graphics.fill(x1, y1, x2, y1 + 1, color);
         graphics.fill(x1, y2 - 1, x2, y2, color);
         graphics.fill(x1, y1, x1 + 1, y2, color);
         graphics.fill(x2 - 1, y1, x2, y2, color);
     }
 
-    private void drawFilledCircle(GuiGraphics graphics, int cx, int cy, int r, int color) {
+    private void drawFilledCircle(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
         for (int dy = -r; dy <= r; dy++) {
             int dx = (int) Math.sqrt(r * r - dy * dy);
             graphics.fill(cx - dx, cy + dy, cx + dx + 1, cy + dy + 1, color);
         }
     }
 
-    private void drawCircleOutline(GuiGraphics graphics, int cx, int cy, int r, int color) {
+    private void drawCircleOutline(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
         for (int deg = 0; deg < 360; deg += 10) {
             double rad = Math.toRadians(deg);
             int x = cx + (int) Math.round(Math.cos(rad) * r);
