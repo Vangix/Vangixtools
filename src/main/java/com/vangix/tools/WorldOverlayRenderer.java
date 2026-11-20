@@ -20,8 +20,13 @@ public class WorldOverlayRenderer {
 
     public record TargetBox(BlockPos pos, float r, float g, float b, float fillAlpha, float lineAlpha) {}
 
+    public record PlayerTarget(Player player, String label, float r, float g, float b, boolean tracer) {}
+
     private static final List<TargetBox> BLOCK_TARGETS = new ArrayList<>();
     private static final List<TargetBox> TRACER_BLOCK_TARGETS = new ArrayList<>();
+    private static final List<PlayerTarget> PLAYER_TARGETS = new ArrayList<>();
+
+    private static int scanCooldown = 0;
 
     public static List<TargetBox> getBlockTargets() {
         return BLOCK_TARGETS;
@@ -31,58 +36,95 @@ public class WorldOverlayRenderer {
         return TRACER_BLOCK_TARGETS;
     }
 
+    public static List<PlayerTarget> getPlayerTargets() {
+        return PLAYER_TARGETS;
+    }
+
+    public static float[] argbToRgbFloats(int argb) {
+        return new float[]{
+                ((argb >> 16) & 0xFF) / 255.0f,
+                ((argb >> 8) & 0xFF) / 255.0f,
+                (argb & 0xFF) / 255.0f
+        };
+    }
+
+    public static float[] getGuideColorRgba() {
+        float[] rgb = argbToRgbFloats(FeatureState.getGuideColor());
+        return new float[]{rgb[0], rgb[1], rgb[2], 0.90f};
+    }
+
     public static void collectTargets(Minecraft mc) {
-        BLOCK_TARGETS.clear();
-        TRACER_BLOCK_TARGETS.clear();
-        if (mc.level == null || mc.player == null) return;
+        if (mc.level == null || mc.player == null) {
+            BLOCK_TARGETS.clear();
+            TRACER_BLOCK_TARGETS.clear();
+            PLAYER_TARGETS.clear();
+            return;
+        }
 
         boolean needEsp = FeatureState.containerSight;
         boolean needBlockTracers = FeatureState.lineGuides && FeatureState.tracerBlocks;
 
-        if (needEsp || needBlockTracers) {
-            int radius = 4;
-            int centerX = mc.player.chunkPosition().x();
-            int centerZ = mc.player.chunkPosition().z();
+        if (!needEsp && !needBlockTracers) {
+            BLOCK_TARGETS.clear();
+            TRACER_BLOCK_TARGETS.clear();
+            scanCooldown = 0;
+        } else if (scanCooldown <= 0) {
+            scanCooldown = 4;
+            scanWorldBlocks(mc, needEsp, needBlockTracers);
+        } else {
+            scanCooldown--;
+        }
 
-            for (int dx = -radius; dx <= radius; dx++) {
-                for (int dz = -radius; dz <= radius; dz++) {
-                    int cx = centerX + dx;
-                    int cz = centerZ + dz;
-                    if (!mc.level.hasChunk(cx, cz)) continue;
-                    if (!(mc.level.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof LevelChunk chunk)) continue;
+        collectPlayerTargets(mc);
+    }
 
-                    for (BlockEntity be : chunk.getBlockEntities().values()) {
-                        float[] rgba = matchBlockEntityColor(be);
-                        if (rgba != null) {
-                            addTarget(be.getBlockPos().immutable(), rgba, needEsp, needBlockTracers);
-                        }
+    private static void scanWorldBlocks(Minecraft mc, boolean needEsp, boolean needBlockTracers) {
+        BLOCK_TARGETS.clear();
+        TRACER_BLOCK_TARGETS.clear();
+
+        int radius = 4;
+        int centerX = mc.player.chunkPosition().x();
+        int centerZ = mc.player.chunkPosition().z();
+        float[] guideRgb = argbToRgbFloats(FeatureState.getGuideColor());
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int cx = centerX + dx;
+                int cz = centerZ + dz;
+                if (!mc.level.hasChunk(cx, cz)) continue;
+                if (!(mc.level.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof LevelChunk chunk)) continue;
+
+                for (BlockEntity be : chunk.getBlockEntities().values()) {
+                    float[] rgba = matchBlockEntityColor(be);
+                    if (rgba != null) {
+                        addTarget(be.getBlockPos().immutable(), rgba, guideRgb, needEsp, needBlockTracers);
                     }
+                }
 
-                    if (FeatureState.filterDiamondBlocks
-                            || FeatureState.filterNetheriteBlocks
-                            || FeatureState.filterEmeraldBlocks
-                            || FeatureState.filterRedstoneBlocks
-                            || FeatureState.filterGildedBlackstone) {
-                        int minWorldY = chunk.getMinY();
-                        LevelChunkSection[] sections = chunk.getSections();
-                        int baseX = cx * 16;
-                        int baseZ = cz * 16;
+                if (FeatureState.filterDiamondBlocks
+                        || FeatureState.filterNetheriteBlocks
+                        || FeatureState.filterEmeraldBlocks
+                        || FeatureState.filterRedstoneBlocks
+                        || FeatureState.filterGildedBlackstone) {
+                    int minWorldY = chunk.getMinY();
+                    LevelChunkSection[] sections = chunk.getSections();
+                    int baseX = cx * 16;
+                    int baseZ = cz * 16;
 
-                        for (int sIdx = 0; sIdx < sections.length; sIdx++) {
-                            LevelChunkSection section = sections[sIdx];
-                            if (section == null || section.hasOnlyAir()) continue;
-                            int sectionBottomY = minWorldY + sIdx * 16;
+                    for (int sIdx = 0; sIdx < sections.length; sIdx++) {
+                        LevelChunkSection section = sections[sIdx];
+                        if (section == null || section.hasOnlyAir()) continue;
+                        int sectionBottomY = minWorldY + sIdx * 16;
 
-                            for (int x = 0; x < 16; x++) {
-                                for (int y = 0; y < 16; y++) {
-                                    int worldY = sectionBottomY + y;
-                                    for (int z = 0; z < 16; z++) {
-                                        BlockState state = section.getBlockState(x, y, z);
-                                        if (state.isAir()) continue;
-                                        float[] rgba = matchBlockStateColor(state.getBlock());
-                                        if (rgba != null) {
-                                            addTarget(new BlockPos(baseX + x, worldY, baseZ + z), rgba, needEsp, needBlockTracers);
-                                        }
+                        for (int x = 0; x < 16; x++) {
+                            for (int y = 0; y < 16; y++) {
+                                int worldY = sectionBottomY + y;
+                                for (int z = 0; z < 16; z++) {
+                                    BlockState state = section.getBlockState(x, y, z);
+                                    if (state.isAir()) continue;
+                                    float[] rgba = matchBlockStateColor(state.getBlock());
+                                    if (rgba != null) {
+                                        addTarget(new BlockPos(baseX + x, worldY, baseZ + z), rgba, guideRgb, needEsp, needBlockTracers);
                                     }
                                 }
                             }
@@ -91,24 +133,51 @@ public class WorldOverlayRenderer {
                 }
             }
         }
+    }
 
-        if (FeatureState.entitySight || FeatureState.lineGuides) {
-            for (Player player : mc.level.players()) {
-                if (player == mc.player || !player.isAlive()) continue;
-                if (FeatureState.entitySight && (FeatureState.showEntityTag || FeatureState.showEntityGear)) {
-                    summarizeGear(player);
-                }
-            }
+    private static void collectPlayerTargets(Minecraft mc) {
+        PLAYER_TARGETS.clear();
+        if (!FeatureState.entitySight && !FeatureState.lineGuides) return;
+
+        float[] guideRgb = argbToRgbFloats(FeatureState.getGuideColor());
+        double distSqLimit = 128.0 * 128.0;
+
+        for (Player player : mc.level.players()) {
+            if (player == mc.player || !player.isAlive()) continue;
+            if (mc.player.distanceToSqr(player) > distSqLimit) continue;
+
+            String label = buildPlayerLabel(player);
+            PLAYER_TARGETS.add(new PlayerTarget(
+                    player,
+                    label,
+                    guideRgb[0],
+                    guideRgb[1],
+                    guideRgb[2],
+                    FeatureState.lineGuides
+            ));
         }
     }
 
-    private static void addTarget(BlockPos pos, float[] rgba, boolean needEsp, boolean needBlockTracers) {
-        TargetBox box = new TargetBox(pos, rgba[0], rgba[1], rgba[2], 0.24f, 0.95f);
+    private static String buildPlayerLabel(Player player) {
+        List<String> parts = new ArrayList<>();
+        if (FeatureState.showEntityTag) {
+            parts.add(player.getName().getString());
+        }
+        if (FeatureState.showEntityGear) {
+            String gear = summarizeGear(player);
+            if (!gear.isEmpty()) {
+                parts.add(gear);
+            }
+        }
+        return String.join(" | ", parts);
+    }
+
+    private static void addTarget(BlockPos pos, float[] blockRgb, float[] guideRgb, boolean needEsp, boolean needBlockTracers) {
         if (needEsp) {
-            BLOCK_TARGETS.add(box);
+            BLOCK_TARGETS.add(new TargetBox(pos, blockRgb[0], blockRgb[1], blockRgb[2], 0.24f, 0.95f));
         }
         if (needBlockTracers) {
-            TRACER_BLOCK_TARGETS.add(box);
+            TRACER_BLOCK_TARGETS.add(new TargetBox(pos, guideRgb[0], guideRgb[1], guideRgb[2], 0.14f, 0.90f));
         }
     }
 
