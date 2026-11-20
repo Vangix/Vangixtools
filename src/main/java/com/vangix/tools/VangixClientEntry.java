@@ -67,14 +67,16 @@ public class VangixClientEntry implements ClientModInitializer {
         if (frameToken == lastOverlayFrameId) return;
         lastOverlayFrameId = frameToken;
 
-        Vec3 camPos = extractCameraPos(mc, null);
-        Object bufferSource = extractBufferSource(mc, levelRenderer);
+        Vec3 camPos = extractCameraPos(mc, levelRenderer);
+        Object renderBuffers = extractRenderBuffers(mc, levelRenderer);
+        Object bufferSource = extractBufferSourceFromRenderBuffers(renderBuffers, levelRenderer);
         Object quadLayer = resolveRenderLayer("debugQuads", "DEBUG_QUADS", "lines", "LINES");
         Object lineLayer = resolveRenderLayer("lines", "LINES", "debugLineStrip", "DEBUG_LINE_STRIP");
 
         if (!loggedRenderDebug) {
             loggedRenderDebug = true;
             System.out.println("[VangixTools] Overlay debug -> camPos=" + camPos
+                    + ", renderBuffers=" + (renderBuffers != null ? renderBuffers.getClass().getName() : "null")
                     + ", bufferSource=" + (bufferSource != null ? bufferSource.getClass().getName() : "null")
                     + ", quadLayer=" + (quadLayer != null ? quadLayer : "null")
                     + ", lineLayer=" + (lineLayer != null ? lineLayer : "null")
@@ -83,177 +85,155 @@ public class VangixClientEntry implements ClientModInitializer {
                     + ", players=" + WorldOverlayRenderer.getPlayerTargets().size());
         }
 
-        if (bufferSource == null) {
-            if (!loggedBufferIntrospect) {
-                loggedBufferIntrospect = true;
-                logBufferIntrospection(mc, levelRenderer);
-            }
-            return;
+        if ((bufferSource == null || (quadLayer == null && lineLayer == null)) && !loggedBufferIntrospect) {
+            loggedBufferIntrospect = true;
+            logRenderBuffersIntrospection(renderBuffers);
         }
 
-        if (quadLayer == null && lineLayer == null) {
-            return;
-        }
+        if (bufferSource != null && (quadLayer != null || lineLayer != null)) {
+            PoseStack poseStack = new PoseStack();
+            poseStack.pushPose();
+            poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
 
-        PoseStack poseStack = new PoseStack();
-        poseStack.pushPose();
-        poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
-
-        // 1) Chunk Finder
-        if (FeatureState.areaScanner) {
-            for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
-                if (quadLayer != null) {
-                    drawHorizontalPlane(poseStack, bufferSource, quadLayer,
-                            ct.minX(), ct.y(), ct.minZ(), ct.maxX(), ct.maxZ(),
-                            ct.r(), ct.g(), ct.b(), ct.fillAlpha());
-                }
-                if (lineLayer != null) {
-                    drawHorizontalOutline(poseStack, bufferSource, lineLayer,
-                            ct.minX(), ct.y() + 0.01, ct.minZ(), ct.maxX(), ct.maxZ(),
-                            ct.r(), ct.g(), ct.b(), ct.lineAlpha());
+            if (FeatureState.areaScanner) {
+                for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
+                    if (quadLayer != null) {
+                        drawHorizontalPlane(poseStack, bufferSource, quadLayer,
+                                ct.minX(), ct.y(), ct.minZ(), ct.maxX(), ct.maxZ(),
+                                ct.r(), ct.g(), ct.b(), ct.fillAlpha());
+                    }
+                    if (lineLayer != null) {
+                        drawHorizontalOutline(poseStack, bufferSource, lineLayer,
+                                ct.minX(), ct.y() + 0.01, ct.minZ(), ct.maxX(), ct.maxZ(),
+                                ct.r(), ct.g(), ct.b(), ct.lineAlpha());
+                    }
                 }
             }
-        }
 
-        // 2) Block ESP
-        if (FeatureState.containerSight) {
-            for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
-                BlockPos p = box.pos();
-                double x1 = p.getX();
-                double y1 = p.getY();
-                double z1 = p.getZ();
-                double x2 = x1 + 1.0;
-                double y2 = y1 + 1.0;
-                double z2 = z1 + 1.0;
+            if (FeatureState.containerSight) {
+                for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
+                    BlockPos p = box.pos();
+                    double x1 = p.getX();
+                    double y1 = p.getY();
+                    double z1 = p.getZ();
+                    double x2 = x1 + 1.0;
+                    double y2 = y1 + 1.0;
+                    double z2 = z1 + 1.0;
 
-                if (quadLayer != null) {
-                    drawBoxFill(poseStack, bufferSource, quadLayer, x1, y1, z1, x2, y2, z2,
-                            box.r(), box.g(), box.b(), box.fillAlpha());
+                    if (quadLayer != null) {
+                        drawBoxFill(poseStack, bufferSource, quadLayer, x1, y1, z1, x2, y2, z2,
+                                box.r(), box.g(), box.b(), box.fillAlpha());
+                    }
+                    if (lineLayer != null) {
+                        drawBoxOutline(poseStack, bufferSource, lineLayer, x1, y1, z1, x2, y2, z2,
+                                box.r(), box.g(), box.b(), box.lineAlpha());
+                    }
                 }
-                if (lineLayer != null) {
-                    drawBoxOutline(poseStack, bufferSource, lineLayer, x1, y1, z1, x2, y2, z2,
-                            box.r(), box.g(), box.b(), box.lineAlpha());
+            }
+
+            if (FeatureState.lineGuides && lineLayer != null) {
+                Vec3 eyePos = mc.player.getEyePosition(1.0f);
+
+                for (WorldOverlayRenderer.PlayerTarget pt : WorldOverlayRenderer.getPlayerTargets()) {
+                    if (!pt.tracer() || pt.player() == null) continue;
+                    Vec3 targetPos = pt.player().position().add(0.0, pt.player().getBbHeight() * 0.5, 0.0);
+                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
+                }
+
+                for (WorldOverlayRenderer.TargetBox tb : WorldOverlayRenderer.getTracerBlockTargets()) {
+                    Vec3 targetPos = Vec3.atCenterOf(tb.pos());
+                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
                 }
             }
+
+            poseStack.popPose();
         }
-
-        // 3) Tracers
-        if (FeatureState.lineGuides && lineLayer != null) {
-            Vec3 eyePos = mc.player.getEyePosition(1.0f);
-
-            for (WorldOverlayRenderer.PlayerTarget pt : WorldOverlayRenderer.getPlayerTargets()) {
-                if (!pt.tracer() || pt.player() == null) continue;
-                Vec3 targetPos = pt.player().position().add(0.0, pt.player().getBbHeight() * 0.5, 0.0);
-                drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
-            }
-
-            for (WorldOverlayRenderer.TargetBox tb : WorldOverlayRenderer.getTracerBlockTargets()) {
-                Vec3 targetPos = Vec3.atCenterOf(tb.pos());
-                drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
-            }
-        }
-
-        poseStack.popPose();
     }
 
-    private static void logBufferIntrospection(Minecraft mc, Object levelRenderer) {
-        System.out.println("[VangixTools] Buffer introspection start:");
+    private static void logRenderBuffersIntrospection(Object renderBuffers) {
+        if (renderBuffers == null) {
+            System.out.println("[VangixTools] RenderBuffers is null");
+            return;
+        }
+        StringJoiner mJoiner = new StringJoiner(", ");
+        for (Method m : renderBuffers.getClass().getMethods()) {
+            if (m.getDeclaringClass() != Object.class) {
+                mJoiner.add(m.getReturnType().getSimpleName() + " " + m.getName() + "(" + m.getParameterCount() + ")");
+            }
+        }
+        StringJoiner fJoiner = new StringJoiner(", ");
+        for (Field f : renderBuffers.getClass().getDeclaredFields()) {
+            fJoiner.add(f.getType().getSimpleName() + " " + f.getName());
+        }
+        System.out.println("[VangixTools] RenderBuffers (" + renderBuffers.getClass().getName() + ")");
+        System.out.println("  methods: " + mJoiner);
+        System.out.println("  fields:  " + fJoiner);
+    }
+
+    private static Object extractRenderBuffers(Minecraft mc, Object levelRenderer) {
+        Object rb = invokeOrReadAny(
+                levelRenderer,
+                new String[]{"renderBuffers", "getRenderBuffers"},
+                new String[]{"renderBuffers"}
+        );
+        if (rb != null) return rb;
+
         if (mc != null) {
-            System.out.println("  mc methods: " + describeZeroArgMethods(mc.getClass()));
-            System.out.println("  mc fields: " + describeFields(mc.getClass()));
-            Object rb = invokeOrReadAny(
+            rb = invokeOrReadAny(
                     mc,
                     new String[]{"renderBuffers", "getRenderBuffers"},
                     new String[]{"renderBuffers"}
             );
-            if (rb != null) {
-                System.out.println("  renderBuffers (" + rb.getClass().getName() + ") methods: "
-                        + describeZeroArgMethods(rb.getClass()));
-                System.out.println("  renderBuffers fields: " + describeFields(rb.getClass()));
-            }
         }
-        if (levelRenderer != null) {
-            System.out.println("  levelRenderer (" + levelRenderer.getClass().getName() + ") methods: "
-                    + describeZeroArgMethods(levelRenderer.getClass()));
-            System.out.println("  levelRenderer fields: " + describeFields(levelRenderer.getClass()));
-        }
+        return rb;
     }
 
-    private static String describeZeroArgMethods(Class<?> cls) {
-        StringJoiner sj = new StringJoiner(", ");
-        for (Method m : cls.getMethods()) {
-            if (m.getParameterCount() == 0 && m.getDeclaringClass() != Object.class) {
-                sj.add(m.getReturnType().getSimpleName() + " " + m.getName() + "()");
-            }
-        }
-        return sj.toString();
-    }
-
-    private static String describeFields(Class<?> cls) {
-        StringJoiner sj = new StringJoiner(", ");
-        for (Field f : cls.getDeclaredFields()) {
-            sj.add(f.getType().getSimpleName() + " " + f.getName());
-        }
-        return sj.toString();
-    }
-
-    private static Vec3 extractCameraPos(Minecraft mc, Object[] args) {
-        if (mc.gameRenderer != null) {
-            for (String camMethod : new String[]{"mainCamera", "camera", "getCamera"}) {
-                try {
-                    Method m = mc.gameRenderer.getClass().getMethod(camMethod);
-                    Object cam = m.invoke(mc.gameRenderer);
-                    if (cam != null) {
-                        for (String posName : new String[]{"position", "getPosition"}) {
-                            try {
-                                Method posMethod = cam.getClass().getMethod(posName);
-                                Object pos = posMethod.invoke(cam);
-                                if (pos instanceof Vec3 v) return v;
-                            } catch (Throwable ignored) {
-                            }
-                        }
-                    }
-                } catch (Throwable ignored) {
-                }
-            }
-        }
-        return mc.player != null ? mc.player.getEyePosition(1.0f) : Vec3.ZERO;
-    }
-
-    private static Object extractBufferSource(Minecraft mc, Object levelRenderer) {
-        String[] bufferMethodNames = {
+    private static Object extractBufferSourceFromRenderBuffers(Object renderBuffers, Object levelRenderer) {
+        String[] bufferNames = {
                 "bufferSource", "getBufferSource",
+                "crumbleBufferSource", "getCrumbleBufferSource",
                 "outlineBufferSource", "getOutlineBufferSource",
                 "multiBufferSource", "getMultiBufferSource",
                 "buffers", "getBuffers",
                 "consumers", "getConsumers"
         };
-        String[] bufferFieldNames = {
-                "bufferSource", "outlineBufferSource", "multiBufferSource", "buffers", "consumers"
-        };
 
-        Object fromLevel = invokeOrReadAny(levelRenderer, bufferMethodNames, bufferFieldNames);
-        if (fromLevel != null) {
-            Object nested = invokeOrReadAny(fromLevel, bufferMethodNames, bufferFieldNames);
-            return nested != null ? nested : fromLevel;
-        }
+        Object bs = invokeOrReadAny(renderBuffers, bufferNames, bufferNames);
+        if (bs != null) return bs;
 
-        if (mc != null) {
-            Object renderBuffers = invokeOrReadAny(
-                    mc,
-                    new String[]{"renderBuffers", "getRenderBuffers"},
-                    new String[]{"renderBuffers"}
+        return invokeOrReadAny(levelRenderer, bufferNames, bufferNames);
+    }
+
+    private static Vec3 extractCameraPos(Minecraft mc, Object levelRenderer) {
+        Object gameRenderer = invokeOrReadAny(
+                mc,
+                new String[]{"gameRenderer", "getGameRenderer"},
+                new String[]{"gameRenderer"}
+        );
+        if (gameRenderer == null) {
+            gameRenderer = invokeOrReadAny(
+                    levelRenderer,
+                    new String[]{"gameRenderer", "getGameRenderer"},
+                    new String[]{"gameRenderer"}
             );
-            if (renderBuffers != null) {
-                Object bs = invokeOrReadAny(renderBuffers, bufferMethodNames, bufferFieldNames);
-                if (bs != null) return bs;
-            }
-
-            Object directMc = invokeOrReadAny(mc, bufferMethodNames, bufferFieldNames);
-            if (directMc != null) return directMc;
         }
 
-        return null;
+        if (gameRenderer != null) {
+            Object cam = invokeOrReadAny(
+                    gameRenderer,
+                    new String[]{"mainCamera", "camera", "getCamera"},
+                    new String[]{"mainCamera", "camera"}
+            );
+            if (cam != null) {
+                Object pos = invokeOrReadAny(
+                        cam,
+                        new String[]{"position", "getPosition"},
+                        new String[]{"position"}
+                );
+                if (pos instanceof Vec3 v) return v;
+            }
+        }
+        return mc != null && mc.player != null ? mc.player.getEyePosition(1.0f) : Vec3.ZERO;
     }
 
     private static Object invokeOrReadAny(Object target, String[] methodNames, String[] fieldNames) {
