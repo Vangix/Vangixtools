@@ -6,8 +6,10 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -21,7 +23,7 @@ public final class ChunkBaseFinder {
     private static long lastScanTick = -20L;
 
     private static final int BASE_SCORE_THRESHOLD = 4;
-    private static final int CHUNK_RADIUS = 4;
+    private static final int CHUNK_RADIUS = 5;
 
     private ChunkBaseFinder() {}
 
@@ -36,12 +38,14 @@ public final class ChunkBaseFinder {
 
     public static void tick(Minecraft mc) {
         if (!FeatureState.areaScanner || mc == null || mc.level == null || mc.player == null) {
-            FOUND_CHUNKS.clear();
+            synchronized (FOUND_CHUNKS) {
+                FOUND_CHUNKS.clear();
+            }
             return;
         }
 
         long gameTime = mc.level.getGameTime();
-        if (gameTime - lastScanTick < 10L) {
+        if (gameTime - lastScanTick < 8L) {
             return;
         }
         lastScanTick = gameTime;
@@ -53,9 +57,9 @@ public final class ChunkBaseFinder {
         int centerChunkX = playerPos.getX() >> 4;
         int centerChunkZ = playerPos.getZ() >> 4;
 
-        // Фиксируем Y относительно земли/мира, а не только узкого коридора вокруг ног в прыжке/полёте
-        int minY = Math.max(level.getMinY(), Math.min(playerPos.getY() - 48, 0));
-        int maxY = Math.min(level.getMaxY() - 1, Math.max(playerPos.getY() + 48, 128));
+        // Строго от нижней границы мира до максимальной высоты строительства
+        int minY = level.getMinY();
+        int maxY = level.getMaxY() - 1;
 
         List<SuspiciousChunk> nextChunks = new ArrayList<>();
 
@@ -64,7 +68,7 @@ public final class ChunkBaseFinder {
                 LevelChunk chunk = level.getChunk(cx, cz);
                 if (chunk == null) continue;
 
-                ScoreResult res = scoreChunk(chunk, minY, maxY);
+                ScoreResult res = scoreChunk(chunk, minY, maxY, playerPos.getY());
                 if (res.score >= BASE_SCORE_THRESHOLD) {
                     nextChunks.add(new SuspiciousChunk(chunk.getPos(), res.score, res.sampleY));
                 }
@@ -79,7 +83,7 @@ public final class ChunkBaseFinder {
 
     private record ScoreResult(int score, int sampleY) {}
 
-    private static ScoreResult scoreChunk(LevelChunk chunk, int minY, int maxY) {
+    private static ScoreResult scoreChunk(LevelChunk chunk, int minY, int maxY, int fallbackY) {
         ChunkPos pos = chunk.getPos();
         int startX = pos.getMinBlockX();
         int startZ = pos.getMinBlockZ();
@@ -88,26 +92,62 @@ public final class ChunkBaseFinder {
         int ySum = 0;
         int hits = 0;
 
+        // 1. Все BlockEntity в чанке на любой высоте от minY до maxY
+        for (BlockEntity be : chunk.getBlockEntities().values()) {
+            BlockPos bePos = be.getBlockPos();
+            int pts = blockEntityWeight(be);
+            if (pts > 0) {
+                score += pts;
+                ySum += bePos.getY();
+                hits++;
+            }
+        }
+
+        // 2. Все непустые секции чанка по всей высоте мира (от minY до maxY)
+        LevelChunkSection[] sections = chunk.getSections();
+        int chunkMinY = chunk.getMinY();
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
-        // Шаг 1 по X и Z и шаг 2 по Y, чтобы прыжок/полёт не пропускал блоки между сетками
-        for (int y = minY; y <= maxY; y += 2) {
-            for (int x = startX; x <= startX + 15; x++) {
-                for (int z = startZ; z <= startZ + 15; z++) {
-                    cursor.set(x, y, z);
-                    BlockState state = chunk.getBlockState(cursor);
-                    int pts = blockBaseWeight(state.getBlock());
-                    if (pts > 0) {
-                        score += pts;
-                        ySum += y;
-                        hits++;
+        for (int sIdx = 0; sIdx < sections.length; sIdx++) {
+            LevelChunkSection section = sections[sIdx];
+            if (section == null || section.hasOnlyAir()) continue;
+
+            int secBottomY = chunkMinY + sIdx * 16;
+            int secTopY = secBottomY + 15;
+
+            int fromY = Math.max(minY, secBottomY);
+            int toY = Math.min(maxY, secTopY);
+
+            for (int y = fromY; y <= toY; y++) {
+                for (int x = startX; x <= startX + 15; x++) {
+                    for (int z = startZ; z <= startZ + 15; z++) {
+                        cursor.set(x, y, z);
+                        BlockState state = chunk.getBlockState(cursor);
+                        if (state.isAir()) continue;
+                        int pts = blockBaseWeight(state.getBlock());
+                        if (pts > 0) {
+                            score += pts;
+                            ySum += y;
+                            hits++;
+                        }
                     }
                 }
             }
         }
 
-        int avgY = hits > 0 ? Math.round((float) ySum / hits) : 64;
+        int avgY = hits > 0 ? Math.round((float) ySum / hits) : fallbackY;
         return new ScoreResult(score, avgY);
+    }
+
+    private static int blockEntityWeight(BlockEntity be) {
+        String name = be.getClass().getSimpleName();
+        if (name.contains("Chest") || name.contains("Barrel") || name.contains("ShulkerBox")) {
+            return 4;
+        }
+        if (name.contains("Furnace") || name.contains("BrewingStand") || name.contains("Spawner") || name.contains("Beacon")) {
+            return 3;
+        }
+        return 0;
     }
 
     private static int blockBaseWeight(Block block) {
