@@ -15,6 +15,7 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class WorldOverlayRenderer {
@@ -26,10 +27,10 @@ public class WorldOverlayRenderer {
     // Плоскость подозрительного чанка (16x16 на высоте sampleY), как на скрине
     public record ChunkTarget(int minX, int minZ, int maxX, int maxZ, double y, float r, float g, float b, float fillAlpha, float lineAlpha) {}
 
-    private static final List<TargetBox> BLOCK_TARGETS = new ArrayList<>();
-    private static final List<TargetBox> TRACER_BLOCK_TARGETS = new ArrayList<>();
-    private static final List<PlayerTarget> PLAYER_TARGETS = new ArrayList<>();
-    private static final List<ChunkTarget> CHUNK_TARGETS = new ArrayList<>();
+    private static final List<TargetBox> BLOCK_TARGETS = Collections.synchronizedList(new ArrayList<>());
+    private static final List<TargetBox> TRACER_BLOCK_TARGETS = Collections.synchronizedList(new ArrayList<>());
+    private static final List<PlayerTarget> PLAYER_TARGETS = Collections.synchronizedList(new ArrayList<>());
+    private static final List<ChunkTarget> CHUNK_TARGETS = Collections.synchronizedList(new ArrayList<>());
 
     private static int scanCooldown = 0;
 
@@ -64,10 +65,7 @@ public class WorldOverlayRenderer {
 
     public static void collectTargets(Minecraft mc) {
         if (mc.level == null || mc.player == null) {
-            BLOCK_TARGETS.clear();
-            TRACER_BLOCK_TARGETS.clear();
-            PLAYER_TARGETS.clear();
-            CHUNK_TARGETS.clear();
+            clearAllTargets();
             return;
         }
 
@@ -75,8 +73,8 @@ public class WorldOverlayRenderer {
         boolean needBlockTracers = FeatureState.lineGuides && FeatureState.tracerBlocks;
 
         if (!needEsp && !needBlockTracers) {
-            BLOCK_TARGETS.clear();
-            TRACER_BLOCK_TARGETS.clear();
+            synchronized (BLOCK_TARGETS) { BLOCK_TARGETS.clear(); }
+            synchronized (TRACER_BLOCK_TARGETS) { TRACER_BLOCK_TARGETS.clear(); }
             scanCooldown = 0;
         } else if (scanCooldown <= 0) {
             scanCooldown = 4;
@@ -89,31 +87,41 @@ public class WorldOverlayRenderer {
         collectChunkTargets(mc);
     }
 
+    private static void clearAllTargets() {
+        synchronized (BLOCK_TARGETS) { BLOCK_TARGETS.clear(); }
+        synchronized (TRACER_BLOCK_TARGETS) { TRACER_BLOCK_TARGETS.clear(); }
+        synchronized (PLAYER_TARGETS) { PLAYER_TARGETS.clear(); }
+        synchronized (CHUNK_TARGETS) { CHUNK_TARGETS.clear(); }
+    }
+
     private static void collectChunkTargets(Minecraft mc) {
-        CHUNK_TARGETS.clear();
-        if (!FeatureState.areaScanner) return;
+        List<ChunkTarget> nextChunks = new ArrayList<>();
+        if (FeatureState.areaScanner) {
+            ChunkBaseFinder.tick(mc);
+            for (ChunkBaseFinder.SuspiciousChunk sc : ChunkBaseFinder.getFoundChunks()) {
+                ChunkPos cp = sc.chunkPos();
+                int minX = cp.getMinBlockX();
+                int minZ = cp.getMinBlockZ();
+                int maxX = cp.getMaxBlockX() + 1;
+                int maxZ = cp.getMaxBlockZ() + 1;
+                double y = sc.sampleY() + 0.05;
 
-        ChunkBaseFinder.tick(mc);
-        for (ChunkBaseFinder.SuspiciousChunk sc : ChunkBaseFinder.getFoundChunks()) {
-            ChunkPos cp = sc.chunkPos();
-            int minX = cp.getMinBlockX();
-            int minZ = cp.getMinBlockZ();
-            int maxX = cp.getMaxBlockX() + 1;
-            int maxZ = cp.getMaxBlockZ() + 1;
-            double y = sc.sampleY() + 0.05;
-
-            // Зелёная полупрозрачная плоскость чанка, как на примере
-            CHUNK_TARGETS.add(new ChunkTarget(
-                    minX, minZ, maxX, maxZ, y,
-                    0.15f, 0.90f, 0.25f,
-                    0.35f, 0.90f
-            ));
+                nextChunks.add(new ChunkTarget(
+                        minX, minZ, maxX, maxZ, y,
+                        0.15f, 0.90f, 0.25f,
+                        0.35f, 0.90f
+                ));
+            }
+        }
+        synchronized (CHUNK_TARGETS) {
+            CHUNK_TARGETS.clear();
+            CHUNK_TARGETS.addAll(nextChunks);
         }
     }
 
     private static void scanWorldBlocks(Minecraft mc, boolean needEsp, boolean needBlockTracers) {
-        BLOCK_TARGETS.clear();
-        TRACER_BLOCK_TARGETS.clear();
+        List<TargetBox> nextBlocks = new ArrayList<>();
+        List<TargetBox> nextTracerBlocks = new ArrayList<>();
 
         int radius = 4;
         int centerX = mc.player.chunkPosition().x();
@@ -130,7 +138,7 @@ public class WorldOverlayRenderer {
                 for (BlockEntity be : chunk.getBlockEntities().values()) {
                     float[] rgba = matchBlockEntityColor(be);
                     if (rgba != null) {
-                        addTarget(be.getBlockPos().immutable(), rgba, guideRgb, needEsp, needBlockTracers);
+                        addTarget(nextBlocks, nextTracerBlocks, be.getBlockPos().immutable(), rgba, guideRgb, needEsp, needBlockTracers);
                     }
                 }
 
@@ -157,7 +165,7 @@ public class WorldOverlayRenderer {
                                     if (state.isAir()) continue;
                                     float[] rgba = matchBlockStateColor(state.getBlock());
                                     if (rgba != null) {
-                                        addTarget(new BlockPos(baseX + x, worldY, baseZ + z), rgba, guideRgb, needEsp, needBlockTracers);
+                                        addTarget(nextBlocks, nextTracerBlocks, new BlockPos(baseX + x, worldY, baseZ + z), rgba, guideRgb, needEsp, needBlockTracers);
                                     }
                                 }
                             }
@@ -166,28 +174,42 @@ public class WorldOverlayRenderer {
                 }
             }
         }
+
+        synchronized (BLOCK_TARGETS) {
+            BLOCK_TARGETS.clear();
+            BLOCK_TARGETS.addAll(nextBlocks);
+        }
+        synchronized (TRACER_BLOCK_TARGETS) {
+            TRACER_BLOCK_TARGETS.clear();
+            TRACER_BLOCK_TARGETS.addAll(nextTracerBlocks);
+        }
     }
 
     private static void collectPlayerTargets(Minecraft mc) {
-        PLAYER_TARGETS.clear();
-        if (!FeatureState.entitySight && !FeatureState.lineGuides) return;
+        List<PlayerTarget> nextPlayers = new ArrayList<>();
+        if (FeatureState.entitySight || FeatureState.lineGuides) {
+            float[] guideRgb = argbToRgbFloats(FeatureState.getGuideColor());
+            double distSqLimit = 128.0 * 128.0;
 
-        float[] guideRgb = argbToRgbFloats(FeatureState.getGuideColor());
-        double distSqLimit = 128.0 * 128.0;
+            for (Player player : mc.level.players()) {
+                if (player == mc.player || !player.isAlive()) continue;
+                if (mc.player.distanceToSqr(player) > distSqLimit) continue;
 
-        for (Player player : mc.level.players()) {
-            if (player == mc.player || !player.isAlive()) continue;
-            if (mc.player.distanceToSqr(player) > distSqLimit) continue;
+                String label = buildPlayerLabel(player);
+                nextPlayers.add(new PlayerTarget(
+                        player,
+                        label,
+                        guideRgb[0],
+                        guideRgb[1],
+                        guideRgb[2],
+                        FeatureState.lineGuides
+                ));
+            }
+        }
 
-            String label = buildPlayerLabel(player);
-            PLAYER_TARGETS.add(new PlayerTarget(
-                    player,
-                    label,
-                    guideRgb[0],
-                    guideRgb[1],
-                    guideRgb[2],
-                    FeatureState.lineGuides
-            ));
+        synchronized (PLAYER_TARGETS) {
+            PLAYER_TARGETS.clear();
+            PLAYER_TARGETS.addAll(nextPlayers);
         }
     }
 
@@ -205,12 +227,13 @@ public class WorldOverlayRenderer {
         return String.join(" | ", parts);
     }
 
-    private static void addTarget(BlockPos pos, float[] blockRgb, float[] guideRgb, boolean needEsp, boolean needBlockTracers) {
+    private static void addTarget(List<TargetBox> blocks, List<TargetBox> tracerBlocks, BlockPos pos,
+                                  float[] blockRgb, float[] guideRgb, boolean needEsp, boolean needBlockTracers) {
         if (needEsp) {
-            BLOCK_TARGETS.add(new TargetBox(pos, blockRgb[0], blockRgb[1], blockRgb[2], 0.24f, 0.95f));
+            blocks.add(new TargetBox(pos, blockRgb[0], blockRgb[1], blockRgb[2], 0.24f, 0.95f));
         }
         if (needBlockTracers) {
-            TRACER_BLOCK_TARGETS.add(new TargetBox(pos, guideRgb[0], guideRgb[1], guideRgb[2], 0.14f, 0.90f));
+            tracerBlocks.add(new TargetBox(pos, guideRgb[0], guideRgb[1], guideRgb[2], 0.14f, 0.90f));
         }
     }
 
