@@ -10,8 +10,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(LevelRenderer.class)
 public class LevelRendererOverlayMixin {
 
-    @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)
-    private void vangixtools$afterRenderLevel(CallbackInfo ci) {
+    @Inject(method = "*", at = @At("RETURN"), require = 0)
+    private void vangixtools$onReturn(CallbackInfo ci) {
         VangixClientEntry.renderWorldOverlaysFromLevelRenderer(this);
     }
 }
