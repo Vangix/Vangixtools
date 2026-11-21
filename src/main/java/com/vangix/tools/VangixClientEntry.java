@@ -14,18 +14,26 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.gizmos.Gizmo;
 import net.minecraft.gizmos.LineGizmo;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.StringJoiner;
 
 public class VangixClientEntry implements ClientModInitializer {
 
     public static final String MOD_ID = "vangixtools";
     public static KeyMapping OPEN_MENU_KEY;
+
+    private static final int MAX_BLOCK_BOXES = 180;
+    private static final int MAX_PLAYER_TRACERS = 20;
+    private static final int MAX_BLOCK_TRACERS = 16;
 
     private static long lastOverlayFrameId = -1L;
     private static boolean loggedRenderDebug = false;
@@ -77,14 +85,19 @@ public class VangixClientEntry implements ClientModInitializer {
         Object quadLayer = resolveRenderLayer("debugQuads", "DEBUG_QUADS", "lines", "LINES");
         Object lineLayer = resolveRenderLayer("lines", "LINES", "debugLineStrip", "DEBUG_LINE_STRIP");
 
+        List<WorldOverlayRenderer.ChunkTarget> chunks = snapshotList(WorldOverlayRenderer.getChunkTargets());
+        List<WorldOverlayRenderer.TargetBox> blocks = snapshotList(WorldOverlayRenderer.getBlockTargets());
+        List<WorldOverlayRenderer.PlayerTarget> players = snapshotList(WorldOverlayRenderer.getPlayerTargets());
+        List<WorldOverlayRenderer.TargetBox> tracerBlocks = snapshotList(WorldOverlayRenderer.getTracerBlockTargets());
+
         if (!loggedRenderDebug) {
             loggedRenderDebug = true;
             System.out.println("[VangixTools] Overlay debug -> gizmoCollector="
                     + (gizmoCollector != null ? gizmoCollector.getClass().getName() : "null")
                     + ", bufferSource=" + (bufferSource != null ? bufferSource.getClass().getName() : "null")
-                    + ", blocks=" + WorldOverlayRenderer.getBlockTargets().size()
-                    + ", chunks=" + WorldOverlayRenderer.getChunkTargets().size()
-                    + ", players=" + WorldOverlayRenderer.getPlayerTargets().size());
+                    + ", blocks=" + blocks.size()
+                    + ", chunks=" + chunks.size()
+                    + ", players=" + players.size());
         }
 
         if (gizmoCollector != null && !loggedGizmoMethods) {
@@ -103,7 +116,7 @@ public class VangixClientEntry implements ClientModInitializer {
         }
 
         if (gizmoCollector != null) {
-            renderWithGizmos(mc, gizmoCollector);
+            renderWithGizmos(mc, gizmoCollector, camPos, chunks, blocks, players, tracerBlocks);
             return;
         }
 
@@ -113,7 +126,7 @@ public class VangixClientEntry implements ClientModInitializer {
             poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
 
             if (FeatureState.areaScanner) {
-                for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
+                for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                     if (quadLayer != null) {
                         drawHorizontalPlane(poseStack, bufferSource, quadLayer,
                                 ct.minX(), ct.y(), ct.minZ(), ct.maxX(), ct.maxZ(),
@@ -128,7 +141,7 @@ public class VangixClientEntry implements ClientModInitializer {
             }
 
             if (FeatureState.containerSight) {
-                for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
+                for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                     BlockPos p = box.pos();
                     double x1 = p.getX();
                     double y1 = p.getY();
@@ -149,17 +162,22 @@ public class VangixClientEntry implements ClientModInitializer {
             }
 
             if (FeatureState.lineGuides && lineLayer != null) {
-                Vec3 eyePos = mc.player.getEyePosition(1.0f);
+                Vec3 startPos = camPos.subtract(0.0, 0.14, 0.0);
 
-                for (WorldOverlayRenderer.PlayerTarget pt : WorldOverlayRenderer.getPlayerTargets()) {
-                    if (!pt.tracer() || pt.player() == null) continue;
+                List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
+                        .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
+                        .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(startPos.x, startPos.y, startPos.z)))
+                        .limit(MAX_PLAYER_TRACERS)
+                        .toList();
+
+                for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
                     Vec3 targetPos = pt.player().position().add(0.0, pt.player().getBbHeight() * 0.5, 0.0);
-                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
+                    drawLine(poseStack, bufferSource, lineLayer, startPos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
                 }
 
-                for (WorldOverlayRenderer.TargetBox tb : WorldOverlayRenderer.getTracerBlockTargets()) {
+                for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, startPos, MAX_BLOCK_TRACERS)) {
                     Vec3 targetPos = Vec3.atCenterOf(tb.pos());
-                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
+                    drawLine(poseStack, bufferSource, lineLayer, startPos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
                 }
             }
 
@@ -167,43 +185,79 @@ public class VangixClientEntry implements ClientModInitializer {
         }
     }
 
-    private static void renderWithGizmos(Minecraft mc, Object gizmoCollector) {
+    private static void renderWithGizmos(Minecraft mc,
+                                         Object gizmoCollector,
+                                         Vec3 camPos,
+                                         List<WorldOverlayRenderer.ChunkTarget> chunks,
+                                         List<WorldOverlayRenderer.TargetBox> blocks,
+                                         List<WorldOverlayRenderer.PlayerTarget> players,
+                                         List<WorldOverlayRenderer.TargetBox> tracerBlocks) {
         if (FeatureState.areaScanner) {
-            for (WorldOverlayRenderer.ChunkTarget ct : WorldOverlayRenderer.getChunkTargets()) {
+            for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                 int argb = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.65f, ct.lineAlpha()));
                 double y = ct.y() + 0.02;
-                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.minZ()), argb, 2.0f);
-                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.maxZ()), argb, 2.0f);
-                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.maxZ()), argb, 2.0f);
-                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.minZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.minZ()), argb, 1.8f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.maxZ()), argb, 1.8f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.maxZ()), argb, 1.8f);
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.minZ()), argb, 1.8f);
             }
         }
 
         if (FeatureState.containerSight) {
-            for (WorldOverlayRenderer.TargetBox box : WorldOverlayRenderer.getBlockTargets()) {
+            for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                 BlockPos p = box.pos();
                 AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
                 int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.75f, box.lineAlpha()));
-                gizmoBoxOutline(gizmoCollector, aabb, lineColor, 2.0f);
+                gizmoBoxOutline(gizmoCollector, aabb, lineColor, 1.8f);
             }
         }
 
         if (FeatureState.lineGuides && mc.player != null) {
-            Vec3 eyePos = mc.player.getEyePosition(1.0f).subtract(0.0, 0.12, 0.0);
+            // Привязываем старт трейсера к камере, чтобы не было задержки и рывков при движении
+            Vec3 tracerOrigin = camPos.subtract(0.0, 0.14, 0.0);
 
-            for (WorldOverlayRenderer.PlayerTarget pt : WorldOverlayRenderer.getPlayerTargets()) {
-                if (!pt.tracer() || pt.player() == null) continue;
-                Vec3 targetPos = pt.player().position().add(0.0, pt.player().getBbHeight() * 0.5, 0.0);
-                int color = toArgb(pt.r(), pt.g(), pt.b(), 0.95f);
-                gizmoLine(gizmoCollector, eyePos, targetPos, color, 2.0f);
+            List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
+                    .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
+                    .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(tracerOrigin.x, tracerOrigin.y, tracerOrigin.z)))
+                    .limit(MAX_PLAYER_TRACERS)
+                    .toList();
+
+            for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
+                Player targetPlayer = pt.player();
+                Vec3 targetPos = targetPlayer.position().add(0.0, targetPlayer.getBbHeight() * 0.5, 0.0);
+                int color = toArgb(pt.r(), pt.g(), pt.b(), 0.90f);
+                gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.6f);
             }
 
-            for (WorldOverlayRenderer.TargetBox tb : WorldOverlayRenderer.getTracerBlockTargets()) {
+            for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, tracerOrigin, MAX_BLOCK_TRACERS)) {
                 Vec3 targetPos = Vec3.atCenterOf(tb.pos());
-                int color = toArgb(tb.r(), tb.g(), tb.b(), 0.90f);
-                gizmoLine(gizmoCollector, eyePos, targetPos, color, 1.8f);
+                int color = toArgb(tb.r(), tb.g(), tb.b(), 0.85f);
+                gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.5f);
             }
         }
+    }
+
+    private static <T> List<T> snapshotList(List<T> source) {
+        if (source == null) return List.of();
+        synchronized (source) {
+            return new ArrayList<>(source);
+        }
+    }
+
+    private static List<WorldOverlayRenderer.TargetBox> limitClosestBoxes(List<WorldOverlayRenderer.TargetBox> boxes,
+                                                                        Vec3 origin,
+                                                                        int limit) {
+        if (boxes.size() <= limit) return boxes;
+        return boxes.stream()
+                .sorted(Comparator.comparingDouble(b -> {
+                    BlockPos p = b.pos();
+                    double cx = p.getX() + 0.5 - origin.x;
+                    double cy = p.getY() + 0.5 - origin.y;
+                    double cz = p.getZ() + 0.5 - origin.z;
+                    return cx * cx + cy * cy + cz * cz;
+                }))
+                .limit(limit)
+                .toList();
     }
 
     private static void gizmoBoxOutline(Object collector, AABB b, int argb, float width) {
@@ -238,14 +292,7 @@ public class VangixClientEntry implements ClientModInitializer {
         try {
             Gizmo line = new LineGizmo(from, to, argb, width);
             Method addMethod = collector.getClass().getMethod("add", Gizmo.class);
-            Object props = addMethod.invoke(collector, line);
-            if (props != null) {
-                try {
-                    Method alwaysOnTop = props.getClass().getMethod("setAlwaysOnTop");
-                    alwaysOnTop.invoke(props);
-                } catch (Throwable ignored) {
-                }
-            }
+            addMethod.invoke(collector, line);
         } catch (Throwable ignored) {
         }
     }
