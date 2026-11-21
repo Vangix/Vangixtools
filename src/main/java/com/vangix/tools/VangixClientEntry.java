@@ -35,7 +35,7 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_PLAYER_TRACERS = 24;
     private static final int MAX_BLOCK_TRACERS = 16;
 
-    private static long lastOverlayFrameId = -1L;
+    private static long lastOverlayNanoTime = -1L;
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
 
@@ -75,9 +75,9 @@ public class VangixClientEntry implements ClientModInitializer {
         if (mc.level == null || mc.player == null) return;
         if (!mc.isSameThread()) return;
 
-        long frameToken = mc.level.getGameTime();
-        if (frameToken == lastOverlayFrameId) return;
-        lastOverlayFrameId = frameToken;
+        long now = System.nanoTime();
+        if (now == lastOverlayNanoTime) return;
+        lastOverlayNanoTime = now;
 
         Object gizmoCollector = extractGizmoCollector(mc, levelRenderer);
         Vec3 camPos = extractCameraPos(mc, levelRenderer);
@@ -164,7 +164,7 @@ public class VangixClientEntry implements ClientModInitializer {
             }
 
             if (FeatureState.lineGuides && lineLayer != null) {
-                Vec3 tracerOrigin = getCrosshairRayOrigin(mc, camPos, partialTick);
+                Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
@@ -216,7 +216,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
         if (FeatureState.lineGuides && mc.player != null) {
             float partialTick = extractPartialTick(mc);
-            Vec3 tracerOrigin = getCrosshairRayOrigin(mc, camPos, partialTick);
+            Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
             List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                     .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
@@ -239,9 +239,9 @@ public class VangixClientEntry implements ClientModInitializer {
         }
     }
 
-    private static Vec3 getCrosshairRayOrigin(Minecraft mc, Vec3 camPos, float partialTick) {
+    private static Vec3 getCrosshairCenterOrigin(Minecraft mc, Vec3 camPos, float partialTick) {
         Vec3 look = mc.player != null ? mc.player.getViewVector(partialTick) : new Vec3(0.0, 0.0, 1.0);
-        return camPos.add(look.scale(0.45)).subtract(0.0, 0.06, 0.0);
+        return camPos.add(look.scale(0.35));
     }
 
     private static float extractPartialTick(Minecraft mc) {
