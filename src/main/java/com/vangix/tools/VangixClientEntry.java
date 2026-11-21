@@ -32,7 +32,7 @@ public class VangixClientEntry implements ClientModInitializer {
     public static KeyMapping OPEN_MENU_KEY;
 
     private static final int MAX_BLOCK_BOXES = 180;
-    private static final int MAX_PLAYER_TRACERS = 20;
+    private static final int MAX_PLAYER_TRACERS = 24;
     private static final int MAX_BLOCK_TRACERS = 16;
 
     private static long lastOverlayFrameId = -1L;
@@ -73,8 +73,9 @@ public class VangixClientEntry implements ClientModInitializer {
     public static void renderWorldOverlaysFromLevelRenderer(Object levelRenderer) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
+        if (!mc.isSameThread()) return;
 
-        long frameToken = mc.level.getGameTime() * 1_000_000L + System.nanoTime() / 4_000_000L;
+        long frameToken = mc.level.getGameTime() * 100_000L + (System.nanoTime() / 1_000_000L);
         if (frameToken == lastOverlayFrameId) return;
         lastOverlayFrameId = frameToken;
 
@@ -163,22 +164,22 @@ public class VangixClientEntry implements ClientModInitializer {
             }
 
             if (FeatureState.lineGuides && lineLayer != null) {
-                Vec3 startPos = camPos.subtract(0.0, 0.14, 0.0);
+                Vec3 eyePos = mc.player.getEyePosition(partialTick).subtract(0.0, 0.12, 0.0);
 
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
-                        .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(startPos.x, startPos.y, startPos.z)))
+                        .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(eyePos.x, eyePos.y, eyePos.z)))
                         .limit(MAX_PLAYER_TRACERS)
                         .toList();
 
                 for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
                     Vec3 targetPos = interpolatePlayerCenter(pt.player(), partialTick);
-                    drawLine(poseStack, bufferSource, lineLayer, startPos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
+                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
                 }
 
-                for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, startPos, MAX_BLOCK_TRACERS)) {
+                for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, eyePos, MAX_BLOCK_TRACERS)) {
                     Vec3 targetPos = Vec3.atCenterOf(tb.pos());
-                    drawLine(poseStack, bufferSource, lineLayer, startPos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
+                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
                 }
             }
 
@@ -197,10 +198,10 @@ public class VangixClientEntry implements ClientModInitializer {
             for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                 int argb = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.65f, ct.lineAlpha()));
                 double y = ct.y() + 0.02;
-                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.minZ()), argb, 1.8f);
-                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.maxZ()), argb, 1.8f);
-                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.maxZ()), argb, 1.8f);
-                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.minZ()), argb, 1.8f);
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.minZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.maxZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.maxZ()), argb, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.minZ()), argb, 2.0f);
             }
         }
 
@@ -209,31 +210,31 @@ public class VangixClientEntry implements ClientModInitializer {
                 BlockPos p = box.pos();
                 AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
                 int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.75f, box.lineAlpha()));
-                gizmoBoxOutline(gizmoCollector, aabb, lineColor, 1.8f);
+                gizmoBoxOutline(gizmoCollector, aabb, lineColor, 2.0f);
             }
         }
 
         if (FeatureState.lineGuides && mc.player != null) {
             float partialTick = extractPartialTick(mc);
-            Vec3 tracerOrigin = camPos.subtract(0.0, 0.14, 0.0);
+            Vec3 eyePos = mc.player.getEyePosition(partialTick).subtract(0.0, 0.12, 0.0);
 
             List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                     .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
-                    .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(tracerOrigin.x, tracerOrigin.y, tracerOrigin.z)))
+                    .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(eyePos.x, eyePos.y, eyePos.z)))
                     .limit(MAX_PLAYER_TRACERS)
                     .toList();
 
             for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
                 Player targetPlayer = pt.player();
                 Vec3 targetPos = interpolatePlayerCenter(targetPlayer, partialTick);
-                int color = toArgb(pt.r(), pt.g(), pt.b(), 0.90f);
-                gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.6f);
+                int color = toArgb(pt.r(), pt.g(), pt.b(), 0.95f);
+                gizmoLine(gizmoCollector, eyePos, targetPos, color, 2.0f);
             }
 
-            for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, tracerOrigin, MAX_BLOCK_TRACERS)) {
+            for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, eyePos, MAX_BLOCK_TRACERS)) {
                 Vec3 targetPos = Vec3.atCenterOf(tb.pos());
-                int color = toArgb(tb.r(), tb.g(), tb.b(), 0.85f);
-                gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.5f);
+                int color = toArgb(tb.r(), tb.g(), tb.b(), 0.90f);
+                gizmoLine(gizmoCollector, eyePos, targetPos, color, 1.8f);
             }
         }
     }
@@ -333,7 +334,14 @@ public class VangixClientEntry implements ClientModInitializer {
         try {
             Gizmo line = new LineGizmo(from, to, argb, width);
             Method addMethod = collector.getClass().getMethod("add", Gizmo.class);
-            addMethod.invoke(collector, line);
+            Object props = addMethod.invoke(collector, line);
+            if (props != null) {
+                try {
+                    Method alwaysOnTop = props.getClass().getMethod("setAlwaysOnTop");
+                    alwaysOnTop.invoke(props);
+                } catch (Throwable ignored) {
+                }
+            }
         } catch (Throwable ignored) {
         }
     }
