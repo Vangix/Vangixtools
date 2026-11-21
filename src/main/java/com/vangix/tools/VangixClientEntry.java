@@ -121,6 +121,7 @@ public class VangixClientEntry implements ClientModInitializer {
         }
 
         if (bufferSource != null && (quadLayer != null || lineLayer != null)) {
+            float partialTick = extractPartialTick(mc);
             PoseStack poseStack = new PoseStack();
             poseStack.pushPose();
             poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
@@ -171,7 +172,7 @@ public class VangixClientEntry implements ClientModInitializer {
                         .toList();
 
                 for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
-                    Vec3 targetPos = pt.player().position().add(0.0, pt.player().getBbHeight() * 0.5, 0.0);
+                    Vec3 targetPos = interpolatePlayerCenter(pt.player(), partialTick);
                     drawLine(poseStack, bufferSource, lineLayer, startPos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
                 }
 
@@ -213,7 +214,7 @@ public class VangixClientEntry implements ClientModInitializer {
         }
 
         if (FeatureState.lineGuides && mc.player != null) {
-            // Привязываем старт трейсера к камере, чтобы не было задержки и рывков при движении
+            float partialTick = extractPartialTick(mc);
             Vec3 tracerOrigin = camPos.subtract(0.0, 0.14, 0.0);
 
             List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
@@ -224,7 +225,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
             for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
                 Player targetPlayer = pt.player();
-                Vec3 targetPos = targetPlayer.position().add(0.0, targetPlayer.getBbHeight() * 0.5, 0.0);
+                Vec3 targetPos = interpolatePlayerCenter(targetPlayer, partialTick);
                 int color = toArgb(pt.r(), pt.g(), pt.b(), 0.90f);
                 gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.6f);
             }
@@ -235,6 +236,46 @@ public class VangixClientEntry implements ClientModInitializer {
                 gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.5f);
             }
         }
+    }
+
+    private static float extractPartialTick(Minecraft mc) {
+        if (mc == null) return 1.0f;
+        try {
+            Method getDeltaTracker = mc.getClass().getMethod("getDeltaTracker");
+            Object tracker = getDeltaTracker.invoke(mc);
+            if (tracker != null) {
+                Method getPartial = tracker.getClass().getMethod("getGameTimeDeltaPartialTick", boolean.class);
+                Object val = getPartial.invoke(tracker, true);
+                if (val instanceof Float f) return f;
+            }
+        } catch (Throwable ignored) {
+        }
+        return 1.0f;
+    }
+
+    private static Vec3 interpolatePlayerCenter(Player player, float partialTick) {
+        double halfHeight = player.getBbHeight() * 0.5;
+        try {
+            Method getPos = player.getClass().getMethod("getPosition", float.class);
+            Object res = getPos.invoke(player, partialTick);
+            if (res instanceof Vec3 v) {
+                return v.add(0.0, halfHeight, 0.0);
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Method getLerped = player.getClass().getMethod("getLerpedPosition", float.class);
+            Object res = getLerped.invoke(player, partialTick);
+            if (res instanceof Vec3 v) {
+                return v.add(0.0, halfHeight, 0.0);
+            }
+        } catch (Throwable ignored) {
+        }
+        Vec3 cur = player.position();
+        double x = player.xo + (cur.x - player.xo) * partialTick;
+        double y = player.yo + (cur.y - player.yo) * partialTick;
+        double z = player.zo + (cur.z - player.zo) * partialTick;
+        return new Vec3(x, y + halfHeight, z);
     }
 
     private static <T> List<T> snapshotList(List<T> source) {
