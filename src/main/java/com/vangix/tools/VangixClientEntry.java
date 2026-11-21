@@ -75,7 +75,7 @@ public class VangixClientEntry implements ClientModInitializer {
         if (mc.level == null || mc.player == null) return;
         if (!mc.isSameThread()) return;
 
-        long frameToken = mc.level.getGameTime() * 100_000L + (System.nanoTime() / 1_000_000L);
+        long frameToken = mc.level.getGameTime();
         if (frameToken == lastOverlayFrameId) return;
         lastOverlayFrameId = frameToken;
 
@@ -164,22 +164,22 @@ public class VangixClientEntry implements ClientModInitializer {
             }
 
             if (FeatureState.lineGuides && lineLayer != null) {
-                Vec3 eyePos = mc.player.getEyePosition(partialTick).subtract(0.0, 0.12, 0.0);
+                Vec3 tracerOrigin = getCrosshairRayOrigin(mc, camPos, partialTick);
 
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
-                        .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(eyePos.x, eyePos.y, eyePos.z)))
+                        .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(tracerOrigin.x, tracerOrigin.y, tracerOrigin.z)))
                         .limit(MAX_PLAYER_TRACERS)
                         .toList();
 
                 for (WorldOverlayRenderer.PlayerTarget pt : closestPlayers) {
                     Vec3 targetPos = interpolatePlayerCenter(pt.player(), partialTick);
-                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
+                    drawLine(poseStack, bufferSource, lineLayer, tracerOrigin, targetPos, pt.r(), pt.g(), pt.b(), 0.90f);
                 }
 
-                for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, eyePos, MAX_BLOCK_TRACERS)) {
+                for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, tracerOrigin, MAX_BLOCK_TRACERS)) {
                     Vec3 targetPos = Vec3.atCenterOf(tb.pos());
-                    drawLine(poseStack, bufferSource, lineLayer, eyePos, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
+                    drawLine(poseStack, bufferSource, lineLayer, tracerOrigin, targetPos, tb.r(), tb.g(), tb.b(), 0.85f);
                 }
             }
 
@@ -216,11 +216,11 @@ public class VangixClientEntry implements ClientModInitializer {
 
         if (FeatureState.lineGuides && mc.player != null) {
             float partialTick = extractPartialTick(mc);
-            Vec3 eyePos = mc.player.getEyePosition(partialTick).subtract(0.0, 0.12, 0.0);
+            Vec3 tracerOrigin = getCrosshairRayOrigin(mc, camPos, partialTick);
 
             List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                     .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
-                    .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(eyePos.x, eyePos.y, eyePos.z)))
+                    .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(tracerOrigin.x, tracerOrigin.y, tracerOrigin.z)))
                     .limit(MAX_PLAYER_TRACERS)
                     .toList();
 
@@ -228,15 +228,20 @@ public class VangixClientEntry implements ClientModInitializer {
                 Player targetPlayer = pt.player();
                 Vec3 targetPos = interpolatePlayerCenter(targetPlayer, partialTick);
                 int color = toArgb(pt.r(), pt.g(), pt.b(), 0.95f);
-                gizmoLine(gizmoCollector, eyePos, targetPos, color, 2.0f);
+                gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 2.0f);
             }
 
-            for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, eyePos, MAX_BLOCK_TRACERS)) {
+            for (WorldOverlayRenderer.TargetBox tb : limitClosestBoxes(tracerBlocks, tracerOrigin, MAX_BLOCK_TRACERS)) {
                 Vec3 targetPos = Vec3.atCenterOf(tb.pos());
                 int color = toArgb(tb.r(), tb.g(), tb.b(), 0.90f);
-                gizmoLine(gizmoCollector, eyePos, targetPos, color, 1.8f);
+                gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.8f);
             }
         }
+    }
+
+    private static Vec3 getCrosshairRayOrigin(Minecraft mc, Vec3 camPos, float partialTick) {
+        Vec3 look = mc.player != null ? mc.player.getViewVector(partialTick) : new Vec3(0.0, 0.0, 1.0);
+        return camPos.add(look.scale(0.45)).subtract(0.0, 0.06, 0.0);
     }
 
     private static float extractPartialTick(Minecraft mc) {
