@@ -17,16 +17,21 @@ public final class ChunkBaseFinder {
 
     public record SuspiciousChunk(ChunkPos chunkPos, int baseScore, int sampleY) {}
 
-    private static final List<SuspiciousChunk> FOUND_CHUNKS = new ArrayList<>();
+    private static final List<SuspiciousChunk> FOUND_CHUNKS = Collections.synchronizedList(new ArrayList<>());
     private static long lastScanTick = -20L;
 
-    private static final int BASE_SCORE_THRESHOLD = 6;
+    private static final int BASE_SCORE_THRESHOLD = 4;
     private static final int CHUNK_RADIUS = 4;
 
     private ChunkBaseFinder() {}
 
     public static List<SuspiciousChunk> getFoundChunks() {
-        return FeatureState.areaScanner ? Collections.unmodifiableList(FOUND_CHUNKS) : Collections.emptyList();
+        if (!FeatureState.areaScanner) {
+            return Collections.emptyList();
+        }
+        synchronized (FOUND_CHUNKS) {
+            return new ArrayList<>(FOUND_CHUNKS);
+        }
     }
 
     public static void tick(Minecraft mc) {
@@ -36,7 +41,7 @@ public final class ChunkBaseFinder {
         }
 
         long gameTime = mc.level.getGameTime();
-        if (gameTime - lastScanTick < 15L) {
+        if (gameTime - lastScanTick < 10L) {
             return;
         }
         lastScanTick = gameTime;
@@ -45,12 +50,14 @@ public final class ChunkBaseFinder {
     }
 
     private static void scanAroundPlayer(Level level, BlockPos playerPos) {
-        FOUND_CHUNKS.clear();
-
         int centerChunkX = playerPos.getX() >> 4;
         int centerChunkZ = playerPos.getZ() >> 4;
-        int minY = Math.max(level.getMinY(), playerPos.getY() - 32);
-        int maxY = Math.min(level.getMaxY() - 1, playerPos.getY() + 24);
+
+        // Фиксируем Y относительно земли/мира, а не только узкого коридора вокруг ног в прыжке/полёте
+        int minY = Math.max(level.getMinY(), Math.min(playerPos.getY() - 48, 0));
+        int maxY = Math.min(level.getMaxY() - 1, Math.max(playerPos.getY() + 48, 128));
+
+        List<SuspiciousChunk> nextChunks = new ArrayList<>();
 
         for (int cx = centerChunkX - CHUNK_RADIUS; cx <= centerChunkX + CHUNK_RADIUS; cx++) {
             for (int cz = centerChunkZ - CHUNK_RADIUS; cz <= centerChunkZ + CHUNK_RADIUS; cz++) {
@@ -59,9 +66,14 @@ public final class ChunkBaseFinder {
 
                 ScoreResult res = scoreChunk(chunk, minY, maxY);
                 if (res.score >= BASE_SCORE_THRESHOLD) {
-                    FOUND_CHUNKS.add(new SuspiciousChunk(chunk.getPos(), res.score, res.sampleY));
+                    nextChunks.add(new SuspiciousChunk(chunk.getPos(), res.score, res.sampleY));
                 }
             }
+        }
+
+        synchronized (FOUND_CHUNKS) {
+            FOUND_CHUNKS.clear();
+            FOUND_CHUNKS.addAll(nextChunks);
         }
     }
 
@@ -78,9 +90,10 @@ public final class ChunkBaseFinder {
 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
+        // Шаг 1 по X и Z и шаг 2 по Y, чтобы прыжок/полёт не пропускал блоки между сетками
         for (int y = minY; y <= maxY; y += 2) {
-            for (int x = startX; x <= startX + 15; x += 2) {
-                for (int z = startZ; z <= startZ + 15; z += 2) {
+            for (int x = startX; x <= startX + 15; x++) {
+                for (int z = startZ; z <= startZ + 15; z++) {
                     cursor.set(x, y, z);
                     BlockState state = chunk.getBlockState(cursor);
                     int pts = blockBaseWeight(state.getBlock());
