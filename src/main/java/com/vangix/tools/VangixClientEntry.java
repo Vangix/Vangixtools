@@ -117,7 +117,7 @@ public class VangixClientEntry implements ClientModInitializer {
         }
 
         if (gizmoCollector != null) {
-            renderWithGizmos(mc, gizmoCollector, camPos, chunks, blocks, players, tracerBlocks);
+            renderWithGizmos(mc, gizmoCollector, bufferSource, quadLayer, camPos, chunks, blocks, players, tracerBlocks);
             return;
         }
 
@@ -189,11 +189,42 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static void renderWithGizmos(Minecraft mc,
                                          Object gizmoCollector,
+                                         Object bufferSource,
+                                         Object quadLayer,
                                          Vec3 camPos,
                                          List<WorldOverlayRenderer.ChunkTarget> chunks,
                                          List<WorldOverlayRenderer.TargetBox> blocks,
                                          List<WorldOverlayRenderer.PlayerTarget> players,
                                          List<WorldOverlayRenderer.TargetBox> tracerBlocks) {
+        List<WorldOverlayRenderer.TargetBox> limitedBlocks = limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES);
+
+        // Полупрозрачная заливка плоскости чанков и граней блоков поверх гизмосов (если доступен quadLayer)
+        if (bufferSource != null && quadLayer != null) {
+            PoseStack poseStack = new PoseStack();
+            poseStack.pushPose();
+            poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
+
+            if (FeatureState.areaScanner) {
+                for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
+                    drawHorizontalPlane(poseStack, bufferSource, quadLayer,
+                            ct.minX(), ct.y() + 0.01, ct.minZ(), ct.maxX(), ct.maxZ(),
+                            ct.r(), ct.g(), ct.b(), ct.fillAlpha());
+                }
+            }
+
+            if (FeatureState.containerSight) {
+                for (WorldOverlayRenderer.TargetBox box : limitedBlocks) {
+                    BlockPos p = box.pos();
+                    drawBoxFill(poseStack, bufferSource, quadLayer,
+                            p.getX(), p.getY(), p.getZ(),
+                            p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0,
+                            box.r(), box.g(), box.b(), box.fillAlpha());
+                }
+            }
+
+            poseStack.popPose();
+        }
+
         if (FeatureState.areaScanner) {
             for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                 int argb = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.65f, ct.lineAlpha()));
@@ -206,7 +237,7 @@ public class VangixClientEntry implements ClientModInitializer {
         }
 
         if (FeatureState.containerSight) {
-            for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
+            for (WorldOverlayRenderer.TargetBox box : limitedBlocks) {
                 BlockPos p = box.pos();
                 AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
                 int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.75f, box.lineAlpha()));
