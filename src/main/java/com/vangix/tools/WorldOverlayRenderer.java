@@ -24,7 +24,6 @@ public class WorldOverlayRenderer {
 
     public record PlayerTarget(Player player, String label, float r, float g, float b, boolean tracer) {}
 
-    // Плоскость подозрительного чанка (16x16 на высоте sampleY), как на скрине
     public record ChunkTarget(int minX, int minZ, int maxX, int maxZ, double y, float r, float g, float b, float fillAlpha, float lineAlpha) {}
 
     private static final List<TargetBox> BLOCK_TARGETS = Collections.synchronizedList(new ArrayList<>());
