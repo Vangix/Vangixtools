@@ -35,10 +35,10 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
 
-    // Отсекает повторные @RETURN из других методов LevelRenderer внутри одного кадра (~4 мс)
-    private static final long SAME_FRAME_GUARD_NS = 4_000_000L;
+    // Защита от повторного срабатывания @RETURN на соседних методах LevelRenderer в одном кадре (~2 мс)
+    private static final long TRACER_DEDUP_WINDOW_NS = 2_000_000L;
 
-    private static long lastOverlayNanoTime = -1L;
+    private static long lastTracerNanoTime = -1L;
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
 
@@ -77,12 +77,6 @@ public class VangixClientEntry implements ClientModInitializer {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
         if (!mc.isSameThread()) return;
-
-        long now = System.nanoTime();
-        if (lastOverlayNanoTime != -1L && (now - lastOverlayNanoTime) < SAME_FRAME_GUARD_NS) {
-            return;
-        }
-        lastOverlayNanoTime = now;
 
         Object gizmoCollector = extractGizmoCollector(mc, levelRenderer);
         Vec3 camPos = extractCameraPos(mc, levelRenderer);
@@ -169,7 +163,7 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
-            if (FeatureState.lineGuides && lineLayer != null) {
+            if (FeatureState.lineGuides && lineLayer != null && canDrawTracersNow()) {
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
                         .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(tracerOrigin.x, tracerOrigin.y, tracerOrigin.z)))
@@ -189,6 +183,15 @@ public class VangixClientEntry implements ClientModInitializer {
 
             poseStack.popPose();
         }
+    }
+
+    private static boolean canDrawTracersNow() {
+        long now = System.nanoTime();
+        if (lastTracerNanoTime != -1L && (now - lastTracerNanoTime) < TRACER_DEDUP_WINDOW_NS) {
+            return false;
+        }
+        lastTracerNanoTime = now;
+        return true;
     }
 
     private static void renderWithGizmos(Minecraft mc,
@@ -218,7 +221,7 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        if (FeatureState.lineGuides && mc.player != null) {
+        if (FeatureState.lineGuides && mc.player != null && canDrawTracersNow()) {
             float partialTick = extractPartialTick(mc);
             Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
