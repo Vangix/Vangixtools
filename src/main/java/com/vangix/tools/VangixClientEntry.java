@@ -38,9 +38,15 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
 
-    private static final float PLAYER_FILL_ALPHA = 0.22f;
+    // Мягкая полупрозрачность заливки, чтобы блок внутри оставался хорошо виден
+    private static final float CHUNK_FILL_ALPHA = 0.08f;
+    private static final float CHUNK_LINE_ALPHA = 0.80f;
+
+    private static final float BLOCK_FILL_ALPHA = 0.11f;
+    private static final float BLOCK_LINE_ALPHA = 0.92f;
+
+    private static final float PLAYER_FILL_ALPHA = 0.12f;
     private static final float PLAYER_LINE_ALPHA = 0.92f;
-    private static final float BLOCK_FILL_MIN_ALPHA = 0.20f;
 
     // Отсекает повторные @RETURN внутри одного и того же кадра (тот же gameTime и partialTick)
     private static long lastTracerGameTime = Long.MIN_VALUE;
@@ -116,15 +122,17 @@ public class VangixClientEntry implements ClientModInitializer {
 
             if (FeatureState.areaScanner) {
                 for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
+                    float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.03f, ct.fillAlpha() * 0.35f));
+                    float lineA = Math.max(CHUNK_LINE_ALPHA, ct.lineAlpha());
                     if (quadLayer != null) {
                         drawHorizontalPlane(poseStack, bufferSource, quadLayer,
                                 ct.minX(), ct.y(), ct.minZ(), ct.maxX(), ct.maxZ(),
-                                ct.r(), ct.g(), ct.b(), ct.fillAlpha());
+                                ct.r(), ct.g(), ct.b(), fillA);
                     }
                     if (lineLayer != null) {
                         drawHorizontalOutline(poseStack, bufferSource, lineLayer,
                                 ct.minX(), ct.y() + 0.01, ct.minZ(), ct.maxX(), ct.maxZ(),
-                                ct.r(), ct.g(), ct.b(), ct.lineAlpha());
+                                ct.r(), ct.g(), ct.b(), lineA);
                     }
                 }
             }
@@ -139,13 +147,16 @@ public class VangixClientEntry implements ClientModInitializer {
                     double y2 = y1 + 1.0;
                     double z2 = z1 + 1.0;
 
+                    float fillA = Math.min(BLOCK_FILL_ALPHA, Math.max(0.05f, box.fillAlpha() * 0.4f));
+                    float lineA = Math.max(BLOCK_LINE_ALPHA, box.lineAlpha());
+
                     if (quadLayer != null) {
                         drawBoxFill(poseStack, bufferSource, quadLayer, x1, y1, z1, x2, y2, z2,
-                                box.r(), box.g(), box.b(), Math.max(BLOCK_FILL_MIN_ALPHA, box.fillAlpha()));
+                                box.r(), box.g(), box.b(), fillA);
                     }
                     if (lineLayer != null) {
                         drawBoxOutline(poseStack, bufferSource, lineLayer, x1, y1, z1, x2, y2, z2,
-                                box.r(), box.g(), box.b(), box.lineAlpha());
+                                box.r(), box.g(), box.b(), lineA);
                     }
                 }
             }
@@ -203,11 +214,13 @@ public class VangixClientEntry implements ClientModInitializer {
                                          List<WorldOverlayRenderer.TargetBox> blocks,
                                          List<WorldOverlayRenderer.PlayerTarget> players,
                                          List<WorldOverlayRenderer.TargetBox> tracerBlocks) {
-        // 1. Чанки: заливка плоскости через RectGizmo + контур линиями
+        // 1. Чанки: лёгкая полупрозрачная плоскость + чёткий контур
         if (FeatureState.areaScanner) {
             for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
-                int lineColor = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.75f, ct.lineAlpha()));
-                int fillColor = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.14f, ct.fillAlpha()));
+                float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.04f, ct.fillAlpha() * 0.35f));
+                float lineA = Math.max(CHUNK_LINE_ALPHA, ct.lineAlpha());
+                int lineColor = toArgb(ct.r(), ct.g(), ct.b(), lineA);
+                int fillColor = toArgb(ct.r(), ct.g(), ct.b(), fillA);
                 double yFill = ct.y() + 0.015;
                 double yLine = ct.y() + 0.025;
 
@@ -228,13 +241,15 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 2. Блоки: полупрозрачный куб с заливкой и обводкой + чёткие рёбра
+        // 2. Блоки: прозрачная заливка, чтобы видеть сам блок + чёткая неоновая обводка
         if (FeatureState.containerSight) {
             for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                 BlockPos p = box.pos();
                 AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
-                int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.85f, box.lineAlpha()));
-                int fillColor = toArgb(box.r(), box.g(), box.b(), Math.max(BLOCK_FILL_MIN_ALPHA, box.fillAlpha()));
+                float fillA = Math.min(BLOCK_FILL_ALPHA, Math.max(0.06f, box.fillAlpha() * 0.4f));
+                float lineA = Math.max(BLOCK_LINE_ALPHA, box.lineAlpha());
+                int lineColor = toArgb(box.r(), box.g(), box.b(), lineA);
+                int fillColor = toArgb(box.r(), box.g(), box.b(), fillA);
 
                 Object style = createGizmoStyle(lineColor, fillColor);
                 if (style != null) {
@@ -244,7 +259,7 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 3. Player ESP: полупрозрачный куб с заливкой и обводкой вокруг игрока
+        // 3. Player ESP: прозрачная заливка + чёткая обводка вокруг игрока
         if (FeatureState.entitySight) {
             List<WorldOverlayRenderer.PlayerTarget> espPlayers = players.stream()
                     .filter(pt -> pt.player() != null && pt.player().isAlive())
@@ -301,7 +316,6 @@ public class VangixClientEntry implements ClientModInitializer {
         }
         if (gizmoStyleClass == null) return null;
 
-        // Пробуем статические фабричные методы GizmoStyle с двумя цветами (stroke + fill)
         String[] twoColorFactoryNames = {
                 "strokeAndFill", "of", "create", "both", "outlineAndFill", "box"
         };
@@ -323,7 +337,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // Пробуем конструкторы GizmoStyle с двумя int (stroke, fill)
         for (Constructor<?> ctor : gizmoStyleClass.getConstructors()) {
             Class<?>[] p = ctor.getParameterTypes();
             if (p.length == 2
@@ -336,7 +349,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // Пробуем фабрику только с заливкой (fill)
         String[] fillOnlyNames = {"fill", "ofFill", "solid"};
         for (String name : fillOnlyNames) {
             for (Method m : gizmoStyleClass.getMethods()) {
