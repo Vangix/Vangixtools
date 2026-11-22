@@ -32,8 +32,12 @@ public class VangixClientEntry implements ClientModInitializer {
     public static KeyMapping OPEN_MENU_KEY;
 
     private static final int MAX_BLOCK_BOXES = 64;
+    private static final int MAX_PLAYER_BOXES = 16;
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
+
+    private static final float PLAYER_FILL_ALPHA = 0.22f;
+    private static final float PLAYER_LINE_ALPHA = 0.92f;
 
     // Отсекает повторные @RETURN внутри одного и того же кадра (тот же gameTime и partialTick)
     private static long lastTracerGameTime = Long.MIN_VALUE;
@@ -131,6 +135,7 @@ public class VangixClientEntry implements ClientModInitializer {
             poseStack.pushPose();
             poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
 
+            // 1. Чанки: полупрозрачная плоскость + обводка
             if (FeatureState.areaScanner) {
                 for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                     if (quadLayer != null) {
@@ -146,6 +151,7 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
+            // 2. Блоки: полупрозрачные грани куба + обводка
             if (FeatureState.containerSight) {
                 for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                     BlockPos p = box.pos();
@@ -167,6 +173,30 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
+            // 3. Player ESP: полупрозрачный бокс + обводка
+            if (FeatureState.entitySight) {
+                List<WorldOverlayRenderer.PlayerTarget> espPlayers = players.stream()
+                        .filter(pt -> pt.player() != null && pt.player().isAlive())
+                        .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(camPos.x, camPos.y, camPos.z)))
+                        .limit(MAX_PLAYER_BOXES)
+                        .toList();
+
+                for (WorldOverlayRenderer.PlayerTarget pt : espPlayers) {
+                    AABB box = buildPlayerBox(pt.player(), partialTick);
+                    if (quadLayer != null) {
+                        drawBoxFill(poseStack, bufferSource, quadLayer,
+                                box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ,
+                                pt.r(), pt.g(), pt.b(), PLAYER_FILL_ALPHA);
+                    }
+                    if (lineLayer != null) {
+                        drawBoxOutline(poseStack, bufferSource, lineLayer,
+                                box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ,
+                                pt.r(), pt.g(), pt.b(), PLAYER_LINE_ALPHA);
+                    }
+                }
+            }
+
+            // 4. Трасеры (дедупликация по кадру)
             if (FeatureState.lineGuides && lineLayer != null && canDrawTracersForFrame(gameTime, partialTick)) {
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
@@ -237,6 +267,20 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
+        if (FeatureState.entitySight) {
+            List<WorldOverlayRenderer.PlayerTarget> espPlayers = players.stream()
+                    .filter(pt -> pt.player() != null && pt.player().isAlive())
+                    .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(camPos.x, camPos.y, camPos.z)))
+                    .limit(MAX_PLAYER_BOXES)
+                    .toList();
+
+            for (WorldOverlayRenderer.PlayerTarget pt : espPlayers) {
+                AABB box = buildPlayerBox(pt.player(), partialTick);
+                int lineColor = toArgb(pt.r(), pt.g(), pt.b(), PLAYER_LINE_ALPHA);
+                gizmoBoxOutline(gizmoCollector, box, lineColor, 2.0f);
+            }
+        }
+
         if (FeatureState.lineGuides && mc.player != null && canDrawTracersForFrame(gameTime, partialTick)) {
             Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
@@ -261,6 +305,44 @@ public class VangixClientEntry implements ClientModInitializer {
         }
     }
 
+    private static AABB buildPlayerBox(Player player, float partialTick) {
+        Vec3 basePos = interpolatePlayerBasePos(player, partialTick);
+        double halfWidth = player.getBbWidth() * 0.5;
+        double height = player.getBbHeight();
+        return new AABB(
+                basePos.x - halfWidth,
+                basePos.y,
+                basePos.z - halfWidth,
+                basePos.x + halfWidth,
+                basePos.y + height,
+                basePos.z + halfWidth
+        );
+    }
+
+    private static Vec3 interpolatePlayerBasePos(Player player, float partialTick) {
+        try {
+            Method getPos = player.getClass().getMethod("getPosition", float.class);
+            Object res = getPos.invoke(player, partialTick);
+            if (res instanceof Vec3 v) {
+                return v;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Method getLerped = player.getClass().getMethod("getLerpedPosition", float.class);
+            Object res = getLerped.invoke(player, partialTick);
+            if (res instanceof Vec3 v) {
+                return v;
+            }
+        } catch (Throwable ignored) {
+        }
+        Vec3 cur = player.position();
+        double x = player.xo + (cur.x - player.xo) * partialTick;
+        double y = player.yo + (cur.y - player.yo) * partialTick;
+        double z = player.zo + (cur.z - player.zo) * partialTick;
+        return new Vec3(x, y, z);
+    }
+
     private static Vec3 getCrosshairCenterOrigin(Minecraft mc, Vec3 camPos, float partialTick) {
         Vec3 look = mc.player != null ? mc.player.getViewVector(partialTick) : new Vec3(0.0, 0.0, 1.0);
         return camPos.add(look.scale(0.35));
@@ -283,27 +365,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static Vec3 interpolatePlayerCenter(Player player, float partialTick) {
         double halfHeight = player.getBbHeight() * 0.5;
-        try {
-            Method getPos = player.getClass().getMethod("getPosition", float.class);
-            Object res = getPos.invoke(player, partialTick);
-            if (res instanceof Vec3 v) {
-                return v.add(0.0, halfHeight, 0.0);
-            }
-        } catch (Throwable ignored) {
-        }
-        try {
-            Method getLerped = player.getClass().getMethod("getLerpedPosition", float.class);
-            Object res = getLerped.invoke(player, partialTick);
-            if (res instanceof Vec3 v) {
-                return v.add(0.0, halfHeight, 0.0);
-            }
-        } catch (Throwable ignored) {
-        }
-        Vec3 cur = player.position();
-        double x = player.xo + (cur.x - player.xo) * partialTick;
-        double y = player.yo + (cur.y - player.yo) * partialTick;
-        double z = player.zo + (cur.z - player.zo) * partialTick;
-        return new Vec3(x, y + halfHeight, z);
+        return interpolatePlayerBasePos(player, partialTick).add(0.0, halfHeight, 0.0);
     }
 
     private static <T> List<T> snapshotList(List<T> source) {
