@@ -214,6 +214,8 @@ public class VangixClientEntry implements ClientModInitializer {
                                          List<WorldOverlayRenderer.TargetBox> blocks,
                                          List<WorldOverlayRenderer.PlayerTarget> players,
                                          List<WorldOverlayRenderer.TargetBox> tracerBlocks) {
+        CustomSkyRenderer.renderCustomSky(mc, gizmoCollector, camPos, partialTick);
+
         if (FeatureState.areaScanner) {
             for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                 float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.003f, ct.fillAlpha() * 0.03f));
