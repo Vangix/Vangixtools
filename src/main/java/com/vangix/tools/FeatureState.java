@@ -4,6 +4,31 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class FeatureState {
+    public enum SkyPreset {
+        PURPLE_GALAXY("Purple Galaxy", 0xFF1A0836, 0xFF6D28D9, 0xFFF472B6, true),
+        RAINY_GRAY("Rainy Gray", 0xFF2B303A, 0xFF4B5563, 0xFF9CA3AF, false),
+        BRIGHT_DAY("Bright Day", 0xFF38BDF8, 0xFFBAE6FD, 0xFFFFFFFF, false),
+        STARRY_NIGHT("Starry Night", 0xFF050816, 0xFF0F172A, 0xFFE2E8F0, true),
+        HEAVENLY_WHITE("Heavenly White", 0xFFDCE7F7, 0xFFF8FAFC, 0xFFFFFFFF, false);
+
+        public final String label;
+        public final int zenithArgb;
+        public final int horizonArgb;
+        public final int accentArgb;
+        public final boolean stars;
+
+        SkyPreset(String label, int zenithArgb, int horizonArgb, int accentArgb, boolean stars) {
+            this.label = label;
+            this.zenithArgb = zenithArgb;
+            this.horizonArgb = horizonArgb;
+            this.accentArgb = accentArgb;
+            this.stars = stars;
+        }
+    }
+
+    public static boolean customSky = false;
+    public static int skyPresetIndex = 0;
+
     public static boolean entitySight = false;
     public static boolean containerSight = false;
     public static boolean lineGuides = false;
@@ -39,6 +64,20 @@ public class FeatureState {
     private static Integer customGuideColor = null;
     private static Integer customHudColor = null;
     public static int accentColor = 0xFF8E2430;
+
+    public static SkyPreset getSkyPreset() {
+        SkyPreset[] values = SkyPreset.values();
+        int idx = Math.floorMod(skyPresetIndex, values.length);
+        return values[idx];
+    }
+
+    public static String getSkyPresetName() {
+        return getSkyPreset().label;
+    }
+
+    public static void cycleSkyPreset() {
+        skyPresetIndex = (skyPresetIndex + 1) % SkyPreset.values().length;
+    }
 
     public static int getGuideColor() {
         if (customGuideColor != null) {
@@ -88,6 +127,7 @@ public class FeatureState {
 
     public static List<String> getEnabledTools() {
         List<String> enabled = new ArrayList<>();
+        if (customSky) enabled.add("Custom Sky (" + getSkyPresetName() + ")");
         if (entitySight) enabled.add("Player ESP");
         if (containerSight) enabled.add("Block ESP");
         if (lineGuides) enabled.add("Tracers");
