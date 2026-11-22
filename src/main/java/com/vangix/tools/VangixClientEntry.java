@@ -34,9 +34,8 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_BLOCK_BOXES = 64;
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
-    private static final long MIN_OVERLAY_INTERVAL_NS = 500_000L;
 
-    private static long lastOverlayNanoTime = -1L;
+    private static long lastRenderedGameTime = Long.MIN_VALUE;
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
 
@@ -76,11 +75,12 @@ public class VangixClientEntry implements ClientModInitializer {
         if (mc.level == null || mc.player == null) return;
         if (!mc.isSameThread()) return;
 
-        long now = System.nanoTime();
-        if (lastOverlayNanoTime != -1L && (now - lastOverlayNanoTime) < MIN_OVERLAY_INTERVAL_NS) {
+        // Строго один рендер на тик, чтобы миксин на "*" не рисовал дублирующий отстающий пучок
+        long gameTime = mc.level.getGameTime();
+        if (gameTime == lastRenderedGameTime) {
             return;
         }
-        lastOverlayNanoTime = now;
+        lastRenderedGameTime = gameTime;
 
         Object gizmoCollector = extractGizmoCollector(mc, levelRenderer);
         Vec3 camPos = extractCameraPos(mc, levelRenderer);
