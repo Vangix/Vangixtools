@@ -1,6 +1,5 @@
 package com.vangix.tools;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -75,6 +74,23 @@ public class ControlPanelScreen extends Screen {
     }
 
     private void setupPanels() {
+        List<SubSetting> skySub = new ArrayList<>();
+        skySub.add(SubSetting.action("Next Sky", FeatureState::cycleSkyPreset));
+        for (int i = 0; i < FeatureState.SkyPreset.values().length; i++) {
+            final int idx = i;
+            final FeatureState.SkyPreset preset = FeatureState.SkyPreset.values()[i];
+            skySub.add(SubSetting.toggle(
+                    preset.label,
+                    () -> FeatureState.skyPresetIndex == idx,
+                    v -> {
+                        if (v) {
+                            FeatureState.skyPresetIndex = idx;
+                            FeatureState.customSky = true;
+                        }
+                    }
+            ));
+        }
+
         List<SubSetting> espSub = List.of(
                 SubSetting.toggle("Entity Tag", () -> FeatureState.showEntityTag, v -> FeatureState.showEntityTag = v),
                 SubSetting.toggle("Entity Gear", () -> FeatureState.showEntityGear, v -> FeatureState.showEntityGear = v),
@@ -114,6 +130,8 @@ public class ControlPanelScreen extends Screen {
         );
 
         addPanel("Visuals", List.of(
+                new ModuleNode("Custom Sky", () -> FeatureState.customSky, v -> FeatureState.customSky = v, skySub,
+                        () -> FeatureState.getSkyPreset().zenithArgb, c -> FeatureState.cycleSkyPreset()),
                 new ModuleNode("Player ESP", () -> FeatureState.entitySight, v -> FeatureState.entitySight = v, espSub),
                 new ModuleNode("Block ESP", () -> FeatureState.containerSight, v -> FeatureState.containerSight = v, blockEspSub),
                 new ModuleNode("Tracers", () -> FeatureState.lineGuides, v -> FeatureState.lineGuides = v, tracersSub,
@@ -674,16 +692,16 @@ public class ControlPanelScreen extends Screen {
                                 sub.boolSetter.accept(!sub.boolGetter.getAsBoolean());
                             } else if (sub.kind == SubKind.COLOR) {
                                 openColorWheel(sub.label, sub.colorGetter, sub.colorSetter);
-                            } else if (sub.action != null) {
+                            } else if (sub.kind == SubKind.ACTION && sub.action != null) {
                                 sub.action.run();
                             }
                             return true;
                         }
                     }
-
                     curY += animSubH;
                 }
             }
+
             colIdx++;
         }
 
@@ -707,9 +725,8 @@ public class ControlPanelScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
-        int keyCode = extractKeyCode(event);
-        if (keyCode == InputConstants.KEY_RSHIFT) {
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == InputConstants.KEY_ESCAPE) {
             if (activeColorSetter != null) {
                 closeColorWheel();
                 return true;
@@ -717,12 +734,7 @@ public class ControlPanelScreen extends Screen {
             closingAnimated = true;
             return true;
         }
-        return super.keyPressed(event);
-    }
-
-    private int extractKeyCode(Object event) {
-        Object v = invokeNoArg(event, "key", "getKey", "keyCode", "getKeyCode", "input");
-        return v instanceof Number n ? n.intValue() : -1;
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
@@ -730,95 +742,110 @@ public class ControlPanelScreen extends Screen {
         return false;
     }
 
-    private int scaleAlpha(int argb, float factor) {
-        float f = Math.max(0.0f, Math.min(1.0f, factor));
-        int baseA = (argb >> 24) & 0xFF;
-        int a = Math.round(baseA * f);
-        return (a << 24) | (argb & 0x00FFFFFF);
+    private void drawBox(GuiGraphicsExtractor g, int x1, int y1, int x2, int y2, int col) {
+        g.fill(x1, y1, x2, y1 + 1, col);
+        g.fill(x1, y2 - 1, x2, y2, col);
+        g.fill(x1, y1, x1 + 1, y2, col);
+        g.fill(x2 - 1, y1, x2, y2, col);
     }
 
-    private int blendRgb(int baseArgb, int tintArgb, float ratio) {
-        float t = Math.max(0.0f, Math.min(1.0f, ratio));
-        int a = (baseArgb >> 24) & 0xFF;
-        int r1 = (baseArgb >> 16) & 0xFF;
-        int g1 = (baseArgb >> 8) & 0xFF;
-        int b1 = baseArgb & 0xFF;
-
-        int r2 = (tintArgb >> 16) & 0xFF;
-        int g2 = (tintArgb >> 8) & 0xFF;
-        int b2 = tintArgb & 0xFF;
-
-        int r = Math.round(r1 + (r2 - r1) * t);
-        int g = Math.round(g1 + (g2 - g1) * t);
-        int b = Math.round(b1 + (b2 - b1) * t);
-        return (a << 24) | (r << 16) | (g << 8) | b;
-    }
-
-    private void drawBox(GuiGraphicsExtractor graphics, int x1, int y1, int x2, int y2, int color) {
-        graphics.fill(x1, y1, x2, y1 + 1, color);
-        graphics.fill(x1, y2 - 1, x2, y2, color);
-        graphics.fill(x1, y1, x1 + 1, y2, color);
-        graphics.fill(x2 - 1, y1, x2, y2, color);
-    }
-
-    private void drawFilledCircle(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
+    private void drawFilledCircle(GuiGraphicsExtractor g, int cx, int cy, int r, int col) {
         for (int dy = -r; dy <= r; dy++) {
-            int dx = (int) Math.sqrt(r * r - dy * dy);
-            graphics.fill(cx - dx, cy + dy, cx + dx + 1, cy + dy + 1, color);
+            int maxDx = (int) Math.sqrt(r * r - dy * dy);
+            g.fill(cx - maxDx, cy + dy, cx + maxDx + 1, cy + dy + 1, col);
         }
     }
 
-    private void drawCircleOutline(GuiGraphicsExtractor graphics, int cx, int cy, int r, int color) {
-        for (int deg = 0; deg < 360; deg += 12) {
-            double rad = Math.toRadians(deg);
-            int x = cx + (int) Math.round(Math.cos(rad) * r);
-            int y = cy + (int) Math.round(Math.sin(rad) * r);
-            graphics.fill(x, y, x + 1, y + 1, color);
+    private void drawCircleOutline(GuiGraphicsExtractor g, int cx, int cy, int r, int col) {
+        int steps = 24;
+        for (int i = 0; i < steps; i++) {
+            double a = (2.0 * Math.PI * i) / steps;
+            int px = cx + (int) Math.round(Math.cos(a) * r);
+            int py = cy + (int) Math.round(Math.sin(a) * r);
+            g.fill(px, py, px + 1, py + 1, col);
         }
+    }
+
+    private int scaleAlpha(int argb, float factor) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, factor));
+        int baseA = (argb >>> 24) & 0xFF;
+        int outA = Math.round(baseA * clamped);
+        return (outA << 24) | (argb & 0x00FFFFFF);
+    }
+
+    private int blendRgb(int c1, int c2, float t) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, t));
+        int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+        int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
+        int r = Math.round(r1 + (r2 - r1) * clamped);
+        int g = Math.round(g1 + (g2 - g1) * clamped);
+        int b = Math.round(b1 + (b2 - b1) * clamped);
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
     private enum SubKind {
-        TOGGLE,
-        COLOR,
-        ACTION
+        TOGGLE, COLOR, ACTION
     }
 
-    private record SubSetting(
-            String label,
-            SubKind kind,
-            BooleanSupplier boolGetter,
-            Consumer<Boolean> boolSetter,
-            IntSupplier colorGetter,
-            IntConsumer colorSetter,
-            Runnable action
-    ) {
+    private static final class SubSetting {
+        final SubKind kind;
+        final String label;
+        final BooleanSupplier boolGetter;
+        final Consumer<Boolean> boolSetter;
+        final IntSupplier colorGetter;
+        final IntConsumer colorSetter;
+        final Runnable action;
+
+        private SubSetting(SubKind kind, String label,
+                           BooleanSupplier boolGetter, Consumer<Boolean> boolSetter,
+                           IntSupplier colorGetter, IntConsumer colorSetter,
+                           Runnable action) {
+            this.kind = kind;
+            this.label = label;
+            this.boolGetter = boolGetter;
+            this.boolSetter = boolSetter;
+            this.colorGetter = colorGetter;
+            this.colorSetter = colorSetter;
+            this.action = action;
+        }
+
         static SubSetting toggle(String label, BooleanSupplier getter, Consumer<Boolean> setter) {
-            return new SubSetting(label, SubKind.TOGGLE, getter, setter, null, null, null);
+            return new SubSetting(SubKind.TOGGLE, label, getter, setter, null, null, null);
         }
 
         static SubSetting color(String label, IntSupplier getter, IntConsumer setter) {
-            return new SubSetting(label, SubKind.COLOR, null, null, getter, setter, null);
+            return new SubSetting(SubKind.COLOR, label, null, null, getter, setter, null);
         }
 
         static SubSetting action(String label, Runnable action) {
-            return new SubSetting(label, SubKind.ACTION, null, null, null, null, action);
+            return new SubSetting(SubKind.ACTION, label, null, null, null, null, action);
         }
     }
 
-    private record ModuleNode(
-            String name,
-            BooleanSupplier getter,
-            Consumer<Boolean> setter,
-            List<SubSetting> subSettings,
-            IntSupplier colorGetter,
-            IntConsumer colorSetter
-    ) {
+    private static final class ModuleNode {
+        final String name;
+        final BooleanSupplier getter;
+        final Consumer<Boolean> setter;
+        final List<SubSetting> subSettings;
+        final IntSupplier colorGetter;
+        final IntConsumer colorSetter;
+
         ModuleNode(String name, BooleanSupplier getter, Consumer<Boolean> setter, List<SubSetting> subSettings) {
             this(name, getter, setter, subSettings, null, null);
         }
 
+        ModuleNode(String name, BooleanSupplier getter, Consumer<Boolean> setter, List<SubSetting> subSettings,
+                   IntSupplier colorGetter, IntConsumer colorSetter) {
+            this.name = name;
+            this.getter = getter;
+            this.setter = setter;
+            this.subSettings = subSettings != null ? subSettings : List.of();
+            this.colorGetter = colorGetter;
+            this.colorSetter = colorSetter;
+        }
+
         boolean hasSubSettings() {
-            return subSettings != null && !subSettings.isEmpty();
+            return !subSettings.isEmpty();
         }
 
         boolean hasColor() {
