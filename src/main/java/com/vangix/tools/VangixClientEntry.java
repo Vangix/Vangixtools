@@ -19,6 +19,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -47,6 +48,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
+    private static boolean loggedGizmoClasses = false;
 
     @Override
     public void onInitializeClient() {
@@ -116,6 +118,11 @@ public class VangixClientEntry implements ClientModInitializer {
             System.out.println("[VangixTools] SimpleGizmoCollector methods: " + sj);
         }
 
+        if (!loggedGizmoClasses) {
+            loggedGizmoClasses = true;
+            dumpGizmoClasses();
+        }
+
         float partialTick = extractPartialTick(mc);
         long gameTime = mc.level.getGameTime();
 
@@ -135,7 +142,6 @@ public class VangixClientEntry implements ClientModInitializer {
             poseStack.pushPose();
             poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
 
-            // 1. Чанки: полупрозрачная плоскость + обводка
             if (FeatureState.areaScanner) {
                 for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
                     if (quadLayer != null) {
@@ -151,7 +157,6 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
-            // 2. Блоки: полупрозрачные грани куба + обводка
             if (FeatureState.containerSight) {
                 for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                     BlockPos p = box.pos();
@@ -173,7 +178,6 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
-            // 3. Player ESP: полупрозрачный бокс + обводка
             if (FeatureState.entitySight) {
                 List<WorldOverlayRenderer.PlayerTarget> espPlayers = players.stream()
                         .filter(pt -> pt.player() != null && pt.player().isAlive())
@@ -196,7 +200,6 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
-            // 4. Трасеры (дедупликация по кадру)
             if (FeatureState.lineGuides && lineLayer != null && canDrawTracersForFrame(gameTime, partialTick)) {
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
@@ -217,6 +220,48 @@ public class VangixClientEntry implements ClientModInitializer {
 
             poseStack.popPose();
         }
+    }
+
+    private static void dumpGizmoClasses() {
+        String[] candidates = {
+                "net.minecraft.gizmos.Gizmo",
+                "net.minecraft.gizmos.LineGizmo",
+                "net.minecraft.gizmos.QuadGizmo",
+                "net.minecraft.gizmos.FaceGizmo",
+                "net.minecraft.gizmos.BoxGizmo",
+                "net.minecraft.gizmos.CuboidGizmo",
+                "net.minecraft.gizmos.FilledBoxGizmo",
+                "net.minecraft.gizmos.PolygonGizmo",
+                "net.minecraft.gizmos.RectGizmo",
+                "net.minecraft.gizmos.GizmoProperties"
+        };
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n================ [VangixTools-Gizmos] ================\n");
+        for (String clsName : candidates) {
+            try {
+                Class<?> c = Class.forName(clsName);
+                sb.append("CLASS ").append(c.getSimpleName()).append(":\n");
+                for (Constructor<?> ctor : c.getConstructors()) {
+                    StringJoiner p = new StringJoiner(", ");
+                    for (Class<?> pt : ctor.getParameterTypes()) {
+                        p.add(pt.getSimpleName());
+                    }
+                    sb.append("  ctor(").append(p).append(")\n");
+                }
+                for (Method m : c.getDeclaredMethods()) {
+                    if (m.getName().contains("Fill") || m.getName().contains("Color") || m.getName().contains("Top") || m.getName().contains("Alpha")) {
+                        StringJoiner p = new StringJoiner(", ");
+                        for (Class<?> pt : m.getParameterTypes()) {
+                            p.add(pt.getSimpleName());
+                        }
+                        sb.append("  method ").append(m.getName()).append("(").append(p).append(")\n");
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        sb.append("=======================================================");
+        System.out.println(sb);
     }
 
     private static boolean canDrawTracersForFrame(long gameTime, float partialTick) {
