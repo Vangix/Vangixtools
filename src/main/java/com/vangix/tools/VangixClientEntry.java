@@ -35,10 +35,12 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
 
-    // Защита от повторного срабатывания @RETURN на соседних методах LevelRenderer в одном кадре (~2 мс)
-    private static final long TRACER_DEDUP_WINDOW_NS = 2_000_000L;
-
+    // Отсекает повторные @RETURN внутри одного и того же кадра (тот же gameTime и partialTick)
+    private static long lastTracerGameTime = Long.MIN_VALUE;
+    private static float lastTracerPartialTick = Float.NaN;
     private static long lastTracerNanoTime = -1L;
+    private static final long MIN_TRACER_GAP_NS = 1_500_000L;
+
     private static boolean loggedRenderDebug = false;
     private static boolean loggedGizmoMethods = false;
 
@@ -110,8 +112,11 @@ public class VangixClientEntry implements ClientModInitializer {
             System.out.println("[VangixTools] SimpleGizmoCollector methods: " + sj);
         }
 
+        float partialTick = extractPartialTick(mc);
+        long gameTime = mc.level.getGameTime();
+
         if (gizmoCollector != null) {
-            renderWithGizmos(mc, gizmoCollector, camPos, chunks, blocks, players, tracerBlocks);
+            renderWithGizmos(mc, gizmoCollector, camPos, partialTick, gameTime, chunks, blocks, players, tracerBlocks);
             return;
         }
 
@@ -121,7 +126,6 @@ public class VangixClientEntry implements ClientModInitializer {
         Object lineLayer = resolveRenderLayer("lines", "LINES", "debugLineStrip", "DEBUG_LINE_STRIP");
 
         if (bufferSource != null && (quadLayer != null || lineLayer != null)) {
-            float partialTick = extractPartialTick(mc);
             Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
             PoseStack poseStack = new PoseStack();
             poseStack.pushPose();
@@ -163,7 +167,7 @@ public class VangixClientEntry implements ClientModInitializer {
                 }
             }
 
-            if (FeatureState.lineGuides && lineLayer != null && canDrawTracersNow()) {
+            if (FeatureState.lineGuides && lineLayer != null && canDrawTracersForFrame(gameTime, partialTick)) {
                 List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
                         .filter(pt -> pt.tracer() && pt.player() != null && pt.player().isAlive())
                         .sorted(Comparator.comparingDouble(pt -> pt.player().distanceToSqr(tracerOrigin.x, tracerOrigin.y, tracerOrigin.z)))
@@ -185,11 +189,21 @@ public class VangixClientEntry implements ClientModInitializer {
         }
     }
 
-    private static boolean canDrawTracersNow() {
+    private static boolean canDrawTracersForFrame(long gameTime, float partialTick) {
         long now = System.nanoTime();
-        if (lastTracerNanoTime != -1L && (now - lastTracerNanoTime) < TRACER_DEDUP_WINDOW_NS) {
+        boolean sameFrameTick = (gameTime == lastTracerGameTime)
+                && !Float.isNaN(lastTracerPartialTick)
+                && Math.abs(partialTick - lastTracerPartialTick) < 1e-5f;
+
+        if (sameFrameTick) {
             return false;
         }
+        if (lastTracerNanoTime != -1L && (now - lastTracerNanoTime) < MIN_TRACER_GAP_NS && gameTime == lastTracerGameTime) {
+            return false;
+        }
+
+        lastTracerGameTime = gameTime;
+        lastTracerPartialTick = partialTick;
         lastTracerNanoTime = now;
         return true;
     }
@@ -197,6 +211,8 @@ public class VangixClientEntry implements ClientModInitializer {
     private static void renderWithGizmos(Minecraft mc,
                                          Object gizmoCollector,
                                          Vec3 camPos,
+                                         float partialTick,
+                                         long gameTime,
                                          List<WorldOverlayRenderer.ChunkTarget> chunks,
                                          List<WorldOverlayRenderer.TargetBox> blocks,
                                          List<WorldOverlayRenderer.PlayerTarget> players,
@@ -221,8 +237,7 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        if (FeatureState.lineGuides && mc.player != null && canDrawTracersNow()) {
-            float partialTick = extractPartialTick(mc);
+        if (FeatureState.lineGuides && mc.player != null && canDrawTracersForFrame(gameTime, partialTick)) {
             Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
             List<WorldOverlayRenderer.PlayerTarget> closestPlayers = players.stream()
