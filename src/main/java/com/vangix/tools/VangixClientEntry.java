@@ -34,7 +34,9 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_BLOCK_BOXES = 64;
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
-    private static final long MIN_OVERLAY_INTERVAL_NS = 300_000L;
+
+    // Отсекает повторные @RETURN из других методов LevelRenderer внутри одного кадра (~4 мс)
+    private static final long SAME_FRAME_GUARD_NS = 4_000_000L;
 
     private static long lastOverlayNanoTime = -1L;
     private static boolean loggedRenderDebug = false;
@@ -77,7 +79,7 @@ public class VangixClientEntry implements ClientModInitializer {
         if (!mc.isSameThread()) return;
 
         long now = System.nanoTime();
-        if (lastOverlayNanoTime != -1L && (now - lastOverlayNanoTime) < MIN_OVERLAY_INTERVAL_NS) {
+        if (lastOverlayNanoTime != -1L && (now - lastOverlayNanoTime) < SAME_FRAME_GUARD_NS) {
             return;
         }
         lastOverlayNanoTime = now;
