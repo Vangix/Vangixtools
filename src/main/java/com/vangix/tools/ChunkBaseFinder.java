@@ -23,7 +23,7 @@ public final class ChunkBaseFinder {
     private static long lastScanTick = -20L;
 
     private static final int BASE_SCORE_THRESHOLD = 4;
-    private static final int CHUNK_RADIUS = 5;
+    private static final int CHUNK_RADIUS = 3;
 
     private ChunkBaseFinder() {}
 
@@ -45,7 +45,7 @@ public final class ChunkBaseFinder {
         }
 
         long gameTime = mc.level.getGameTime();
-        if (gameTime - lastScanTick < 8L) {
+        if (gameTime - lastScanTick < 15L) {
             return;
         }
         lastScanTick = gameTime;
@@ -57,7 +57,6 @@ public final class ChunkBaseFinder {
         int centerChunkX = playerPos.getX() >> 4;
         int centerChunkZ = playerPos.getZ() >> 4;
 
-        // Строго от нижней границы мира до максимальной высоты строительства
         int minY = level.getMinY();
         int maxY = level.getMaxY() - 1;
 
@@ -92,7 +91,7 @@ public final class ChunkBaseFinder {
         int ySum = 0;
         int hits = 0;
 
-        // 1. Все BlockEntity в чанке на любой высоте от minY до maxY
+        // 1. Быстрая проверка всех BlockEntity на любой высоте (сундуки, бочки, шалкеры, печи, спавнеры)
         for (BlockEntity be : chunk.getBlockEntities().values()) {
             BlockPos bePos = be.getBlockPos();
             int pts = blockEntityWeight(be);
@@ -103,7 +102,7 @@ public final class ChunkBaseFinder {
             }
         }
 
-        // 2. Все непустые секции чанка по всей высоте мира (от minY до maxY)
+        // 2. Сэмпл по непустым секциям от бедрока до максимума высоты без фризов
         LevelChunkSection[] sections = chunk.getSections();
         int chunkMinY = chunk.getMinY();
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
@@ -118,9 +117,9 @@ public final class ChunkBaseFinder {
             int fromY = Math.max(minY, secBottomY);
             int toY = Math.min(maxY, secTopY);
 
-            for (int y = fromY; y <= toY; y++) {
-                for (int x = startX; x <= startX + 15; x++) {
-                    for (int z = startZ; z <= startZ + 15; z++) {
+            for (int y = fromY; y <= toY; y += 2) {
+                for (int x = startX; x <= startX + 15; x += 2) {
+                    for (int z = startZ; z <= startZ + 15; z += 2) {
                         cursor.set(x, y, z);
                         BlockState state = chunk.getBlockState(cursor);
                         if (state.isAir()) continue;
