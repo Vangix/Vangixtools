@@ -38,15 +38,15 @@ public class VangixClientEntry implements ClientModInitializer {
     private static final int MAX_PLAYER_TRACERS = 12;
     private static final int MAX_BLOCK_TRACERS = 8;
 
-    // Мягкая полупрозрачность заливки, чтобы блок внутри оставался хорошо виден
-    private static final float CHUNK_FILL_ALPHA = 0.08f;
-    private static final float CHUNK_LINE_ALPHA = 0.80f;
+    // Очень лёгкая заливка, чтобы блок/игрок внутри читался без засвета
+    private static final float CHUNK_FILL_ALPHA = 0.03f;
+    private static final float CHUNK_LINE_ALPHA = 0.85f;
 
-    private static final float BLOCK_FILL_ALPHA = 0.11f;
-    private static final float BLOCK_LINE_ALPHA = 0.92f;
+    private static final float BLOCK_FILL_ALPHA = 0.04f;
+    private static final float BLOCK_LINE_ALPHA = 0.96f;
 
-    private static final float PLAYER_FILL_ALPHA = 0.12f;
-    private static final float PLAYER_LINE_ALPHA = 0.92f;
+    private static final float PLAYER_FILL_ALPHA = 0.045f;
+    private static final float PLAYER_LINE_ALPHA = 0.96f;
 
     // Отсекает повторные @RETURN внутри одного и того же кадра (тот же gameTime и partialTick)
     private static long lastTracerGameTime = Long.MIN_VALUE;
@@ -122,7 +122,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
             if (FeatureState.areaScanner) {
                 for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
-                    float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.03f, ct.fillAlpha() * 0.35f));
+                    float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.015f, ct.fillAlpha() * 0.15f));
                     float lineA = Math.max(CHUNK_LINE_ALPHA, ct.lineAlpha());
                     if (quadLayer != null) {
                         drawHorizontalPlane(poseStack, bufferSource, quadLayer,
@@ -147,7 +147,7 @@ public class VangixClientEntry implements ClientModInitializer {
                     double y2 = y1 + 1.0;
                     double z2 = z1 + 1.0;
 
-                    float fillA = Math.min(BLOCK_FILL_ALPHA, Math.max(0.05f, box.fillAlpha() * 0.4f));
+                    float fillA = Math.min(BLOCK_FILL_ALPHA, Math.max(0.02f, box.fillAlpha() * 0.15f));
                     float lineA = Math.max(BLOCK_LINE_ALPHA, box.lineAlpha());
 
                     if (quadLayer != null) {
@@ -214,10 +214,9 @@ public class VangixClientEntry implements ClientModInitializer {
                                          List<WorldOverlayRenderer.TargetBox> blocks,
                                          List<WorldOverlayRenderer.PlayerTarget> players,
                                          List<WorldOverlayRenderer.TargetBox> tracerBlocks) {
-        // 1. Чанки: лёгкая полупрозрачная плоскость + чёткий контур
         if (FeatureState.areaScanner) {
             for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
-                float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.04f, ct.fillAlpha() * 0.35f));
+                float fillA = Math.min(CHUNK_FILL_ALPHA, Math.max(0.015f, ct.fillAlpha() * 0.15f));
                 float lineA = Math.max(CHUNK_LINE_ALPHA, ct.lineAlpha());
                 int lineColor = toArgb(ct.r(), ct.g(), ct.b(), lineA);
                 int fillColor = toArgb(ct.r(), ct.g(), ct.b(), fillA);
@@ -241,12 +240,11 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 2. Блоки: прозрачная заливка, чтобы видеть сам блок + чёткая неоновая обводка
         if (FeatureState.containerSight) {
             for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                 BlockPos p = box.pos();
                 AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
-                float fillA = Math.min(BLOCK_FILL_ALPHA, Math.max(0.06f, box.fillAlpha() * 0.4f));
+                float fillA = Math.min(BLOCK_FILL_ALPHA, Math.max(0.02f, box.fillAlpha() * 0.15f));
                 float lineA = Math.max(BLOCK_LINE_ALPHA, box.lineAlpha());
                 int lineColor = toArgb(box.r(), box.g(), box.b(), lineA);
                 int fillColor = toArgb(box.r(), box.g(), box.b(), fillA);
@@ -259,7 +257,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 3. Player ESP: прозрачная заливка + чёткая обводка вокруг игрока
         if (FeatureState.entitySight) {
             List<WorldOverlayRenderer.PlayerTarget> espPlayers = players.stream()
                     .filter(pt -> pt.player() != null && pt.player().isAlive())
@@ -280,7 +277,6 @@ public class VangixClientEntry implements ClientModInitializer {
             }
         }
 
-        // 4. Трасеры (дедупликация по кадру)
         if (FeatureState.lineGuides && mc.player != null && canDrawTracersForFrame(gameTime, partialTick)) {
             Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
