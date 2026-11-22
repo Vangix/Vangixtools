@@ -2,6 +2,7 @@ package com.vangix.tools;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
@@ -725,8 +726,8 @@ public class ControlPanelScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == InputConstants.KEY_ESCAPE) {
+    public boolean keyPressed(KeyEvent event) {
+        if (isEscapeEvent(event)) {
             if (activeColorSetter != null) {
                 closeColorWheel();
                 return true;
@@ -734,7 +735,16 @@ public class ControlPanelScreen extends Screen {
             closingAnimated = true;
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        return super.keyPressed(event);
+    }
+
+    private boolean isEscapeEvent(Object event) {
+        if (event == null) return false;
+        Object codeObj = invokeNoArg(event, "key", "getKey", "keyCode", "getKeyCode");
+        if (codeObj instanceof Number n) {
+            return n.intValue() == 256;
+        }
+        return false;
     }
 
     @Override
