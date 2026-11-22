@@ -11,8 +11,10 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.gizmos.CuboidGizmo;
 import net.minecraft.gizmos.Gizmo;
 import net.minecraft.gizmos.LineGizmo;
+import net.minecraft.gizmos.RectGizmo;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
@@ -25,7 +27,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.StringJoiner;
 
 public class VangixClientEntry implements ClientModInitializer {
 
@@ -39,6 +40,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static final float PLAYER_FILL_ALPHA = 0.22f;
     private static final float PLAYER_LINE_ALPHA = 0.92f;
+    private static final float BLOCK_FILL_MIN_ALPHA = 0.20f;
 
     // Отсекает повторные @RETURN внутри одного и того же кадра (тот же gameTime и partialTick)
     private static long lastTracerGameTime = Long.MIN_VALUE;
@@ -46,9 +48,8 @@ public class VangixClientEntry implements ClientModInitializer {
     private static long lastTracerNanoTime = -1L;
     private static final long MIN_TRACER_GAP_NS = 1_500_000L;
 
-    private static boolean loggedRenderDebug = false;
-    private static boolean loggedGizmoMethods = false;
-    private static boolean loggedGizmoClasses = false;
+    private static Class<?> gizmoStyleClass = null;
+    private static boolean resolvedGizmoStyleClass = false;
 
     @Override
     public void onInitializeClient() {
@@ -93,35 +94,6 @@ public class VangixClientEntry implements ClientModInitializer {
         List<WorldOverlayRenderer.TargetBox> blocks = snapshotList(WorldOverlayRenderer.getBlockTargets());
         List<WorldOverlayRenderer.PlayerTarget> players = snapshotList(WorldOverlayRenderer.getPlayerTargets());
         List<WorldOverlayRenderer.TargetBox> tracerBlocks = snapshotList(WorldOverlayRenderer.getTracerBlockTargets());
-
-        if (!loggedRenderDebug) {
-            loggedRenderDebug = true;
-            System.out.println("[VangixTools] Overlay debug -> gizmoCollector="
-                    + (gizmoCollector != null ? gizmoCollector.getClass().getName() : "null")
-                    + ", blocks=" + blocks.size()
-                    + ", chunks=" + chunks.size()
-                    + ", players=" + players.size());
-        }
-
-        if (gizmoCollector != null && !loggedGizmoMethods) {
-            loggedGizmoMethods = true;
-            StringJoiner sj = new StringJoiner(", ");
-            for (Method m : gizmoCollector.getClass().getMethods()) {
-                if (m.getDeclaringClass() != Object.class) {
-                    StringJoiner p = new StringJoiner(", ");
-                    for (Class<?> c : m.getParameterTypes()) {
-                        p.add(c.getSimpleName());
-                    }
-                    sj.add(m.getReturnType().getSimpleName() + " " + m.getName() + "(" + p + ")");
-                }
-            }
-            System.out.println("[VangixTools] SimpleGizmoCollector methods: " + sj);
-        }
-
-        if (!loggedGizmoClasses) {
-            loggedGizmoClasses = true;
-            dumpGizmoClasses();
-        }
 
         float partialTick = extractPartialTick(mc);
         long gameTime = mc.level.getGameTime();
@@ -169,7 +141,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
                     if (quadLayer != null) {
                         drawBoxFill(poseStack, bufferSource, quadLayer, x1, y1, z1, x2, y2, z2,
-                                box.r(), box.g(), box.b(), box.fillAlpha());
+                                box.r(), box.g(), box.b(), Math.max(BLOCK_FILL_MIN_ALPHA, box.fillAlpha()));
                     }
                     if (lineLayer != null) {
                         drawBoxOutline(poseStack, bufferSource, lineLayer, x1, y1, z1, x2, y2, z2,
@@ -222,67 +194,6 @@ public class VangixClientEntry implements ClientModInitializer {
         }
     }
 
-    private static void dumpGizmoClasses() {
-        String[] candidates = {
-                "net.minecraft.gizmos.Gizmo",
-                "net.minecraft.gizmos.LineGizmo",
-                "net.minecraft.gizmos.QuadGizmo",
-                "net.minecraft.gizmos.FaceGizmo",
-                "net.minecraft.gizmos.BoxGizmo",
-                "net.minecraft.gizmos.CuboidGizmo",
-                "net.minecraft.gizmos.FilledBoxGizmo",
-                "net.minecraft.gizmos.PolygonGizmo",
-                "net.minecraft.gizmos.RectGizmo",
-                "net.minecraft.gizmos.GizmoProperties"
-        };
-        StringBuilder sb = new StringBuilder();
-        sb.append("\n================ [VangixTools-Gizmos] ================\n");
-        for (String clsName : candidates) {
-            try {
-                Class<?> c = Class.forName(clsName);
-                sb.append("CLASS ").append(c.getSimpleName()).append(":\n");
-                for (Constructor<?> ctor : c.getConstructors()) {
-                    StringJoiner p = new StringJoiner(", ");
-                    for (Class<?> pt : ctor.getParameterTypes()) {
-                        p.add(pt.getSimpleName());
-                    }
-                    sb.append("  ctor(").append(p).append(")\n");
-                }
-                for (Method m : c.getDeclaredMethods()) {
-                    if (m.getName().contains("Fill") || m.getName().contains("Color") || m.getName().contains("Top") || m.getName().contains("Alpha")) {
-                        StringJoiner p = new StringJoiner(", ");
-                        for (Class<?> pt : m.getParameterTypes()) {
-                            p.add(pt.getSimpleName());
-                        }
-                        sb.append("  method ").append(m.getName()).append("(").append(p).append(")\n");
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        sb.append("=======================================================");
-        System.out.println(sb);
-    }
-
-    private static boolean canDrawTracersForFrame(long gameTime, float partialTick) {
-        long now = System.nanoTime();
-        boolean sameFrameTick = (gameTime == lastTracerGameTime)
-                && !Float.isNaN(lastTracerPartialTick)
-                && Math.abs(partialTick - lastTracerPartialTick) < 1e-5f;
-
-        if (sameFrameTick) {
-            return false;
-        }
-        if (lastTracerNanoTime != -1L && (now - lastTracerNanoTime) < MIN_TRACER_GAP_NS && gameTime == lastTracerGameTime) {
-            return false;
-        }
-
-        lastTracerGameTime = gameTime;
-        lastTracerPartialTick = partialTick;
-        lastTracerNanoTime = now;
-        return true;
-    }
-
     private static void renderWithGizmos(Minecraft mc,
                                          Object gizmoCollector,
                                          Vec3 camPos,
@@ -292,26 +203,48 @@ public class VangixClientEntry implements ClientModInitializer {
                                          List<WorldOverlayRenderer.TargetBox> blocks,
                                          List<WorldOverlayRenderer.PlayerTarget> players,
                                          List<WorldOverlayRenderer.TargetBox> tracerBlocks) {
+        // 1. Чанки: заливка плоскости через RectGizmo + контур линиями
         if (FeatureState.areaScanner) {
             for (WorldOverlayRenderer.ChunkTarget ct : chunks) {
-                int argb = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.65f, ct.lineAlpha()));
-                double y = ct.y() + 0.02;
-                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.minZ()), argb, 2.0f);
-                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.minZ()), new Vec3(ct.maxX(), y, ct.maxZ()), argb, 2.0f);
-                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.maxZ()), argb, 2.0f);
-                gizmoLine(gizmoCollector, new Vec3(ct.minX(), y, ct.maxZ()), new Vec3(ct.minX(), y, ct.minZ()), argb, 2.0f);
+                int lineColor = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.75f, ct.lineAlpha()));
+                int fillColor = toArgb(ct.r(), ct.g(), ct.b(), Math.max(0.14f, ct.fillAlpha()));
+                double yFill = ct.y() + 0.015;
+                double yLine = ct.y() + 0.025;
+
+                Vec3 c00 = new Vec3(ct.minX(), yFill, ct.minZ());
+                Vec3 c10 = new Vec3(ct.maxX(), yFill, ct.minZ());
+                Vec3 c11 = new Vec3(ct.maxX(), yFill, ct.maxZ());
+                Vec3 c01 = new Vec3(ct.minX(), yFill, ct.maxZ());
+
+                Object style = createGizmoStyle(lineColor, fillColor);
+                if (style != null) {
+                    addGizmoSafe(gizmoCollector, new RectGizmo(c00, c10, c11, c01, (net.minecraft.gizmos.GizmoStyle) style));
+                }
+
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), yLine, ct.minZ()), new Vec3(ct.maxX(), yLine, ct.minZ()), lineColor, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), yLine, ct.minZ()), new Vec3(ct.maxX(), yLine, ct.maxZ()), lineColor, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.maxX(), yLine, ct.maxZ()), new Vec3(ct.minX(), yLine, ct.maxZ()), lineColor, 2.0f);
+                gizmoLine(gizmoCollector, new Vec3(ct.minX(), yLine, ct.maxZ()), new Vec3(ct.minX(), yLine, ct.minZ()), lineColor, 2.0f);
             }
         }
 
+        // 2. Блоки: полупрозрачный куб с заливкой и обводкой + чёткие рёбра
         if (FeatureState.containerSight) {
             for (WorldOverlayRenderer.TargetBox box : limitClosestBoxes(blocks, camPos, MAX_BLOCK_BOXES)) {
                 BlockPos p = box.pos();
                 AABB aabb = new AABB(p.getX(), p.getY(), p.getZ(), p.getX() + 1.0, p.getY() + 1.0, p.getZ() + 1.0);
-                int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.75f, box.lineAlpha()));
+                int lineColor = toArgb(box.r(), box.g(), box.b(), Math.max(0.85f, box.lineAlpha()));
+                int fillColor = toArgb(box.r(), box.g(), box.b(), Math.max(BLOCK_FILL_MIN_ALPHA, box.fillAlpha()));
+
+                Object style = createGizmoStyle(lineColor, fillColor);
+                if (style != null) {
+                    addGizmoSafe(gizmoCollector, new CuboidGizmo(aabb, (net.minecraft.gizmos.GizmoStyle) style, true));
+                }
                 gizmoBoxOutline(gizmoCollector, aabb, lineColor, 2.0f);
             }
         }
 
+        // 3. Player ESP: полупрозрачный куб с заливкой и обводкой вокруг игрока
         if (FeatureState.entitySight) {
             List<WorldOverlayRenderer.PlayerTarget> espPlayers = players.stream()
                     .filter(pt -> pt.player() != null && pt.player().isAlive())
@@ -322,10 +255,17 @@ public class VangixClientEntry implements ClientModInitializer {
             for (WorldOverlayRenderer.PlayerTarget pt : espPlayers) {
                 AABB box = buildPlayerBox(pt.player(), partialTick);
                 int lineColor = toArgb(pt.r(), pt.g(), pt.b(), PLAYER_LINE_ALPHA);
+                int fillColor = toArgb(pt.r(), pt.g(), pt.b(), PLAYER_FILL_ALPHA);
+
+                Object style = createGizmoStyle(lineColor, fillColor);
+                if (style != null) {
+                    addGizmoSafe(gizmoCollector, new CuboidGizmo(box, (net.minecraft.gizmos.GizmoStyle) style, true));
+                }
                 gizmoBoxOutline(gizmoCollector, box, lineColor, 2.0f);
             }
         }
 
+        // 4. Трасеры (дедупликация по кадру)
         if (FeatureState.lineGuides && mc.player != null && canDrawTracersForFrame(gameTime, partialTick)) {
             Vec3 tracerOrigin = getCrosshairCenterOrigin(mc, camPos, partialTick);
 
@@ -348,6 +288,109 @@ public class VangixClientEntry implements ClientModInitializer {
                 gizmoLine(gizmoCollector, tracerOrigin, targetPos, color, 1.8f);
             }
         }
+    }
+
+    private static Object createGizmoStyle(int strokeArgb, int fillArgb) {
+        if (!resolvedGizmoStyleClass) {
+            resolvedGizmoStyleClass = true;
+            try {
+                gizmoStyleClass = Class.forName("net.minecraft.gizmos.GizmoStyle");
+            } catch (Throwable ignored) {
+                gizmoStyleClass = null;
+            }
+        }
+        if (gizmoStyleClass == null) return null;
+
+        // Пробуем статические фабричные методы GizmoStyle с двумя цветами (stroke + fill)
+        String[] twoColorFactoryNames = {
+                "strokeAndFill", "of", "create", "both", "outlineAndFill", "box"
+        };
+        for (String name : twoColorFactoryNames) {
+            for (Method m : gizmoStyleClass.getMethods()) {
+                if (java.lang.reflect.Modifier.isStatic(m.getModifiers())
+                        && m.getName().equals(name)
+                        && m.getParameterCount() == 2) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if ((p[0] == int.class || p[0] == Integer.class)
+                            && (p[1] == int.class || p[1] == Integer.class)) {
+                        try {
+                            Object res = m.invoke(null, strokeArgb, fillArgb);
+                            if (res != null) return res;
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+            }
+        }
+
+        // Пробуем конструкторы GizmoStyle с двумя int (stroke, fill)
+        for (Constructor<?> ctor : gizmoStyleClass.getConstructors()) {
+            Class<?>[] p = ctor.getParameterTypes();
+            if (p.length == 2
+                    && (p[0] == int.class || p[0] == Integer.class)
+                    && (p[1] == int.class || p[1] == Integer.class)) {
+                try {
+                    return ctor.newInstance(strokeArgb, fillArgb);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+
+        // Пробуем фабрику только с заливкой (fill)
+        String[] fillOnlyNames = {"fill", "ofFill", "solid"};
+        for (String name : fillOnlyNames) {
+            for (Method m : gizmoStyleClass.getMethods()) {
+                if (java.lang.reflect.Modifier.isStatic(m.getModifiers())
+                        && m.getName().equals(name)
+                        && m.getParameterCount() == 1) {
+                    Class<?> p0 = m.getParameterTypes()[0];
+                    if (p0 == int.class || p0 == Integer.class) {
+                        try {
+                            Object res = m.invoke(null, fillArgb);
+                            if (res != null) return res;
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static void addGizmoSafe(Object collector, Gizmo gizmo) {
+        if (collector == null || gizmo == null) return;
+        try {
+            Method addMethod = collector.getClass().getMethod("add", Gizmo.class);
+            Object props = addMethod.invoke(collector, gizmo);
+            if (props != null) {
+                try {
+                    Method alwaysOnTop = props.getClass().getMethod("setAlwaysOnTop");
+                    alwaysOnTop.invoke(props);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean canDrawTracersForFrame(long gameTime, float partialTick) {
+        long now = System.nanoTime();
+        boolean sameFrameTick = (gameTime == lastTracerGameTime)
+                && !Float.isNaN(lastTracerPartialTick)
+                && Math.abs(partialTick - lastTracerPartialTick) < 1e-5f;
+
+        if (sameFrameTick) {
+            return false;
+        }
+        if (lastTracerNanoTime != -1L && (now - lastTracerNanoTime) < MIN_TRACER_GAP_NS && gameTime == lastTracerGameTime) {
+            return false;
+        }
+
+        lastTracerGameTime = gameTime;
+        lastTracerPartialTick = partialTick;
+        lastTracerNanoTime = now;
+        return true;
     }
 
     private static AABB buildPlayerBox(Player player, float partialTick) {
@@ -465,19 +508,7 @@ public class VangixClientEntry implements ClientModInitializer {
 
     private static void gizmoLine(Object collector, Vec3 from, Vec3 to, int argb, float width) {
         if (collector == null) return;
-        try {
-            Gizmo line = new LineGizmo(from, to, argb, width);
-            Method addMethod = collector.getClass().getMethod("add", Gizmo.class);
-            Object props = addMethod.invoke(collector, line);
-            if (props != null) {
-                try {
-                    Method alwaysOnTop = props.getClass().getMethod("setAlwaysOnTop");
-                    alwaysOnTop.invoke(props);
-                } catch (Throwable ignored) {
-                }
-            }
-        } catch (Throwable ignored) {
-        }
+        addGizmoSafe(collector, new LineGizmo(from, to, argb, width));
     }
 
     private static Object extractGizmoCollector(Minecraft mc, Object levelRenderer) {
